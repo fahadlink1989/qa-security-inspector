@@ -1,6 +1,6 @@
 {
   "name": "qa-security-inspector",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
@@ -10,6 +10,11 @@
   "dependencies": {
     "next": "15.5.18",
     "react": "19.1.1",
-    "react-dom": "19.1.1"
+    "react-dom": "19.1.1",
+    "@vercel/blob": "latest",
+    "cheerio": "1.1.2",
+    "pdf-lib": "1.17.1",
+    "playwright-core": "latest",
+    "@sparticuz/chromium": "latest"
   }
 }
