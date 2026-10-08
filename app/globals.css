@@ -202,3 +202,34 @@ td:first-child span{margin-top:4px;color:#7e8996;font-size:10px;line-height:1.45
 .evidenceMeta{display:block!important;margin-top:4px;color:#6f7b88!important;font-size:9px!important}
 .drawer section p{white-space:pre-line}
 @media(max-width:700px){.engineHealth{grid-template-columns:1fr}}
+
+.deepButton{background:linear-gradient(135deg,#765cff,#a85cff)!important;box-shadow:0 0 0 1px #9a7cff33,0 8px 24px #765cff25}
+.assetActions{display:flex;gap:8px;align-items:center}
+.assetActions button{white-space:nowrap}
+.vulnList,.actionList{display:grid;gap:10px;margin-top:14px}
+.vulnCard,.actionCard,.fixSummary{border:1px solid #2a323d;background:#141920;border-radius:12px;padding:16px}
+.vulnTop,.actionHead{display:flex;justify-content:space-between;gap:18px;align-items:flex-start}
+.vulnTop>div:first-child,.actionHead>div:first-child{display:flex;gap:9px;align-items:center;flex-wrap:wrap}
+.vulnTop strong{font-size:15px}
+.vulnTop span,.vulnMeta span,.actionOwner span,.actionOwner small{font-size:10px;color:#8591a0}
+.cvss{display:grid;justify-items:end}
+.cvss b{font-size:26px;line-height:1}
+.cvss span{font-size:9px;color:#778391;margin-top:3px}
+.vulnCard p,.actionCard p,.fixSummary p{font-size:12px;color:#aab4c1;line-height:1.6}
+.vulnMeta{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.fixCenter .sectionHead{align-items:flex-start}
+.fixSummary{margin-top:14px;background:linear-gradient(180deg,#171c26,#12171e)}
+.fixSummary strong{font-size:13px}
+.actionHead h3{font-size:14px;margin:0}
+.actionOwner{display:grid;justify-items:end;gap:3px;text-align:right}
+.actionColumns{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:14px}
+.actionColumns>div{border:1px solid #272f39;background:#10151b;border-radius:9px;padding:12px}
+.actionColumns strong,.aiGuidance strong{font-size:10px;text-transform:uppercase;letter-spacing:.08em;color:#8f9baa}
+.actionColumns ol,.aiGuidance ol{margin:8px 0 0;padding-left:18px;color:#b3bdc8;font-size:11px;line-height:1.6}
+.actionLinks{display:flex;gap:10px;flex-wrap:wrap;margin-top:12px}
+.actionLinks span{font-size:9px;border:1px solid #313946;border-radius:999px;padding:4px 8px;color:#8793a1}
+.aiGuidance{background:#10161e;border-color:#39415a!important;border-radius:10px;padding:13px!important}
+.guidanceMeta{display:flex;gap:8px;margin-bottom:12px}
+.guidanceMeta span{font-size:9px;border:1px solid #333d4a;border-radius:999px;padding:4px 8px;color:#9da9b6}
+.scanModeBadge{font-size:9px}
+@media(max-width:800px){.actionColumns{grid-template-columns:1fr}.vulnTop,.actionHead{display:grid}.actionOwner{justify-items:start;text-align:left}}
