@@ -21,6 +21,29 @@ function formatDate(value) {
   try { return new Date(value).toLocaleString(); } catch { return value; }
 }
 
+function ResultTabs({ scan, active, onChange }) {
+  if (!scan) return null;
+  const items = [
+    ['findings','All findings',scan.findings?.length || 0,true],
+    ['attackPaths','Attack paths',scan.attackPaths?.length || 0,scan.mode==='deep'],
+    ['exposures','Exposures',(scan.findings || []).filter((item)=>item.category==='Exposure').length,scan.mode==='deep'],
+    ['apiSecurity','API security',(scan.findings || []).filter((item)=>item.category==='API Security').length,scan.mode==='deep'],
+    ['vulnerabilities','CVEs',scan.metrics?.cvesMatched || 0,scan.mode==='deep'],
+    ['quality','Browser QA',null,true],
+    ['surface','Discovery',null,true]
+  ].filter((item)=>item[3]);
+
+  return (
+    <div className="resultNav">
+      {items.map(([key,label,count])=>(
+        <button key={key} className={active===key?'active':''} onClick={()=>onChange(key)}>
+          {label}{count !== null ? <span>{count}</span> : null}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export default function Home() {
   const [data, setData] = useState({ projects: [], scans: [], workspace: {} });
   const [tab, setTab] = useState('overview');
@@ -113,6 +136,56 @@ export default function Home() {
     () => project?.authScans?.[0] || null,
     [project]
   );
+
+  const scanAsset = useMemo(
+    () => project?.assets?.find((item)=>item.id===scanAssetId) || project?.assets?.[0] || null,
+    [project, scanAssetId]
+  );
+
+  const hasDeepScan = useMemo(
+    () => projectScans.some((item)=>item.mode==='deep'),
+    [projectScans]
+  );
+
+  const journeyAction = useMemo(() => {
+    if (!project) return null;
+    if (!projectScans.length) return {
+      eyebrow:'STEP 2 OF 4',
+      title:'Run your first Baseline Scan',
+      text:'Start with a quick baseline to check the selected site, browser behavior, security configuration, TLS/DNS and obvious application issues.',
+      cta:'Choose a scan',
+      target:'scans'
+    };
+    if (!hasDeepScan) return {
+      eyebrow:'NEXT RECOMMENDED',
+      title:'Expand to a Deep Scan',
+      text:'Your baseline is ready. Deep Scan discovers the wider public attack surface: subdomains, APIs, exposures, CVEs and attack paths.',
+      cta:'Run Deep Scan',
+      target:'scans'
+    };
+    const openPriority=(scan?.findings || []).filter((item)=>['Critical','High','Medium'].includes(item.severity) && !['resolved','accepted','false_positive'].includes(item.workflowStatus || 'open')).length;
+    if (openPriority) return {
+      eyebrow:'NEXT RECOMMENDED',
+      title:'Fix the highest-priority risks',
+      text:openPriority+' important finding(s) are still open. Fix Center turns them into implementation and verification steps.',
+      cta:'Open Fix Center',
+      target:'remediation'
+    };
+    if (!latestAuthScan) return {
+      eyebrow:'OPTIONAL NEXT LAYER',
+      title:'Validate what happens after login',
+      text:'Use a dedicated test session to compare anonymous vs authenticated behavior and identify protected application/API surfaces.',
+      cta:'Set up Authenticated Scan',
+      target:'authenticated'
+    };
+    return {
+      eyebrow:'MONITOR',
+      title:'Review results and keep monitoring',
+      text:'Your major scan layers have run. Review current evidence, retest fixes, and schedule recurring monitoring if needed.',
+      cta:'View Results',
+      target:'findings'
+    };
+  }, [project, projectScans, hasDeepScan, scan, latestAuthScan]);
 
   const findings = useMemo(() => {
     if (!scan) return [];
@@ -410,6 +483,13 @@ export default function Home() {
               <article><span>Open findings</span><strong>{dashboard.open}</strong><small>latest project scans</small></article>
             </section>
 
+            {project && journeyAction ? (
+              <section className="nextActionCard">
+                <div><span className="eyebrow">{journeyAction.eyebrow}</span><h2>{journeyAction.title}</h2><p>{journeyAction.text}</p></div>
+                <button className="primary" onClick={()=>setTab(journeyAction.target)}>{journeyAction.cta}</button>
+              </section>
+            ) : null}
+
             {project && scan ? (
               <>
                 <section className="heroResult">
@@ -476,6 +556,13 @@ export default function Home() {
               </section>
             )}
 
+            {project && !scan && journeyAction ? (
+              <section className="nextActionCard">
+                <div><span className="eyebrow">{journeyAction.eyebrow}</span><h2>{journeyAction.title}</h2><p>{journeyAction.text}</p></div>
+                <button className="primary" onClick={()=>setTab(journeyAction.target)}>{journeyAction.cta}</button>
+              </section>
+            ) : null}
+
             {data.projects.length > 0 && (
               <section className="projectList panel">
                 <div className="sectionHead"><div><span className="eyebrow">PORTFOLIO</span><h3>Projects</h3></div></div>
@@ -517,17 +604,118 @@ export default function Home() {
         ) : null}
 
         {!loading && tab === 'scans' ? (
-          <section className="panel">
-            <div className="sectionHead"><div><span className="eyebrow">HISTORY & REGRESSIONS</span><h2>Scans</h2></div></div>
-            {!projectScans.length ? <div className="empty">No scans for this project yet.</div> : (
-              <div className="scanList">
-                {projectScans.map((item)=>(
-                  <button key={item.id} className={'scanRow ' + (item.id === scan?.id ? 'selected' : '')} onClick={()=>{setSelectedScanId(item.id);setTab('findings')}}>
-                    <div><strong>{item.finalUrl}</strong><span>{formatDate(item.completedAt)} · {item.trigger}</span></div>
-                    <div className="scanStats"><span>Score <b>{item.score}</b></span><span>New <b>{item.findings.filter(f=>f.lifecycle==='new').length}</b></span><span>Resolved <b>{item.resolvedFindings?.length || 0}</b></span></div>
-                  </button>
-                ))}
+          <section className="panel scanCenter">
+            <div className="sectionHead">
+              <div>
+                <span className="eyebrow">SCAN CENTER</span>
+                <h2>What do you want Inspector to check?</h2>
+                <p>Choose a scan based on the question you want answered. We’ll take you to Results automatically when the scan finishes.</p>
               </div>
+            </div>
+
+            {!project ? <div className="empty">Create or select a project first.</div> : (
+              <>
+                <div className="journeyStrip">
+                  <div className="done"><span>1</span><strong>Asset</strong><small>{project.assets?.length ? 'Added' : 'Required'}</small></div>
+                  <div className={projectScans.length ? 'done' : 'current'}><span>2</span><strong>Scan</strong><small>{projectScans.length ? 'Baseline ready' : 'Choose below'}</small></div>
+                  <div className={projectScans.length ? 'current' : ''}><span>3</span><strong>Results</strong><small>Understand risk</small></div>
+                  <div><span>4</span><strong>Fix & retest</strong><small>Close the loop</small></div>
+                </div>
+
+                <div className="scanTargetBar">
+                  <label>
+                    <span>Asset to scan</span>
+                    <select value={scanAsset?.id || ''} onChange={(e)=>setScanAssetId(e.target.value)}>
+                      {(project.assets || []).map((asset)=><option key={asset.id} value={asset.id}>{asset.label} · {asset.url}</option>)}
+                    </select>
+                  </label>
+                  <label className="scanAuthorization">
+                    <input type="checkbox" checked={authorized} onChange={(e)=>setAuthorized(e.target.checked)} />
+                    <span><strong>Authorization confirmed</strong><small>I own or have explicit permission to test this asset.</small></span>
+                  </label>
+                </div>
+
+                <div className="scanChoiceGrid">
+                  <article className="scanChoice recommended">
+                    <div className="scanChoiceTop"><Badge tone="success">Start here</Badge><span>Usually &lt; 1 min</span></div>
+                    <h3>Baseline Scan</h3>
+                    <p className="scanQuestion">“Is this website configured and behaving safely right now?”</p>
+                    <ul>
+                      <li>Selected site and linked pages</li>
+                      <li>Browser/runtime and accessibility checks</li>
+                      <li>Security headers, TLS/DNS and cookies</li>
+                      <li>Basic API, JavaScript and broken-link discovery</li>
+                    </ul>
+                    <div className="scanOutcome"><strong>You’ll get</strong><span>Prioritized findings + browser QA + initial discovery.</span></div>
+                    <button className="primary" disabled={!authorized || scanning || !scanAsset} onClick={()=>runScan(scanAsset?.id,'standard')}>
+                      {scanning && activeScanMode==='standard' ? 'Running Baseline Scan…' : !authorized ? 'Confirm authorization to run' : 'Run Baseline Scan'}
+                    </button>
+                  </article>
+
+                  <article className="scanChoice">
+                    <div className="scanChoiceTop"><Badge tone="purple">Full public surface</Badge><span>Usually 1–3 min</span></div>
+                    <h3>Deep Scan</h3>
+                    <p className="scanQuestion">“What can an attacker discover across my public domain?”</p>
+                    <ul>
+                      <li>Public subdomains and live hosts</li>
+                      <li>Pages, APIs, OpenAPI and JavaScript</li>
+                      <li>Exposed artifacts, CVEs and configuration issues</li>
+                      <li>Correlated attack paths and remediation priorities</li>
+                    </ul>
+                    <div className="scanOutcome"><strong>You’ll get</strong><span>Domain-wide Results views for Exposures, APIs, CVEs and Attack Paths.</span></div>
+                    <button className="primary" disabled={!authorized || scanning || !scanAsset} onClick={()=>runScan(scanAsset?.id,'deep')}>
+                      {scanning && activeScanMode==='deep' ? 'Running Deep Scan…' : !authorized ? 'Confirm authorization to run' : 'Run Deep Scan'}
+                    </button>
+                  </article>
+
+                  <article className="scanChoice">
+                    <div className="scanChoiceTop"><Badge tone="medium">Post-login</Badge><span>Best after Deep Scan</span></div>
+                    <h3>Authenticated Scan</h3>
+                    <p className="scanQuestion">“What changes after a user signs in?”</p>
+                    <ul>
+                      <li>Uses a dedicated test Bearer token or cookie</li>
+                      <li>Compares anonymous vs authenticated access</li>
+                      <li>Maps protected pages and APIs</li>
+                      <li>Session credential is never persisted</li>
+                    </ul>
+                    <div className="scanOutcome"><strong>Requires</strong><span>A valid authorized test session. Read-only GET/HEAD checks only.</span></div>
+                    <button className="secondary" onClick={()=>setTab('authenticated')}>Set up Authenticated Scan</button>
+                  </article>
+
+                  <article className="scanChoice">
+                    <div className="scanChoiceTop"><Badge tone="neutral">Source code</Badge><span>GitHub</span></div>
+                    <h3>Code Security</h3>
+                    <p className="scanQuestion">“Does our repository expose secrets or vulnerable dependencies?”</p>
+                    <ul>
+                      <li>Committed secret patterns and risky artifacts</li>
+                      <li>Pinned dependency advisories / CVEs</li>
+                      <li>Security-sensitive code sinks for review</li>
+                      <li>Private repo token is optional and never stored</li>
+                    </ul>
+                    <div className="scanOutcome"><strong>Requires</strong><span>A GitHub repository URL; token only for private repositories.</span></div>
+                    <button className="secondary" onClick={()=>setTab('codeSecurity')}>Set up Code Security</button>
+                  </article>
+                </div>
+
+                <div className="whatNext">
+                  <strong>What happens after I click Run?</strong>
+                  <span>Inspector scans the selected asset, saves the non-sensitive results to this project, then opens <b>Results</b>. From there, <b>Fix Center</b> explains what to change and how to verify the fix.</span>
+                </div>
+
+                <div className="scanHistoryBlock">
+                  <div className="sectionHead"><div><span className="eyebrow">HISTORY</span><h3>Previous web scans</h3><p>Open any completed scan to compare findings and regressions.</p></div></div>
+                  {!projectScans.length ? <div className="empty">No web scans yet. Start with Baseline Scan above.</div> : (
+                    <div className="scanList">
+                      {projectScans.map((item)=>(
+                        <button key={item.id} className={'scanRow ' + (item.id === scan?.id ? 'selected' : '')} onClick={()=>{setSelectedScanId(item.id);setTab('findings')}}>
+                          <div><strong>{item.scanType || (item.mode==='deep'?'Deep Scan':'Baseline Scan')}</strong><span>{item.finalUrl} · {formatDate(item.completedAt)} · {item.status === 'completed_with_gaps' ? 'completed with gaps' : item.status}</span></div>
+                          <div className="scanStats"><span>Score <b>{item.score}</b></span><span>New <b>{item.findings.filter(f=>f.lifecycle==='new').length}</b></span><span>Resolved <b>{item.resolvedFindings?.length || 0}</b></span></div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </>
             )}
           </section>
         ) : null}
@@ -541,17 +729,7 @@ export default function Home() {
                 <option>Security</option><option>Quality</option><option>new</option><option>open</option>
               </select>
             </div>
-            {scan ? (
-              <div className="resultNav">
-                <button className="active" onClick={()=>setTab('findings')}>All findings <span>{scan.findings?.length || 0}</span></button>
-                {scan.mode==='deep' ? <button onClick={()=>setTab('attackPaths')}>Attack paths <span>{scan.attackPaths?.length || 0}</span></button> : null}
-                {scan.mode==='deep' ? <button onClick={()=>setTab('exposures')}>Exposures <span>{(scan.findings || []).filter((item)=>item.category==='Exposure').length}</span></button> : null}
-                {scan.mode==='deep' ? <button onClick={()=>setTab('apiSecurity')}>API security <span>{(scan.findings || []).filter((item)=>item.category==='API Security').length}</span></button> : null}
-                {scan.mode==='deep' ? <button onClick={()=>setTab('vulnerabilities')}>CVEs <span>{scan.metrics?.cvesMatched || 0}</span></button> : null}
-                <button onClick={()=>setTab('quality')}>Browser QA</button>
-                <button onClick={()=>setTab('surface')}>Discovery</button>
-              </div>
-            ) : null}
+            <ResultTabs scan={scan} active="findings" onChange={setTab} />
             {!scan ? <div className="empty">No scan selected.</div> : (
               <div className="tableWrap">
                 <table>
@@ -581,6 +759,7 @@ export default function Home() {
             <div className="sectionHead">
               <div><span className="eyebrow">VALIDATED INTERNET EXPOSURES</span><h2>Exposures</h2><p>Public artifacts, administrative surfaces, debug endpoints and DNS conditions validated with low-impact requests.</p></div>
             </div>
+            <ResultTabs scan={scan} active="exposures" onChange={setTab} />
             {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
               <div className="empty">Run Deep Scan to validate exposures across discovered public hosts.</div>
             ) : (
@@ -611,6 +790,7 @@ export default function Home() {
             <div className="sectionHead">
               <div><span className="eyebrow">SAFE AUTHORIZATION VALIDATION</span><h2>API Security</h2><p>Inspector tests only safe first-party GET/HEAD endpoints and never sends state-changing API payloads.</p></div>
             </div>
+            <ResultTabs scan={scan} active="apiSecurity" onChange={setTab} />
             {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
               <div className="empty">Run Deep Scan to classify and safely validate discovered APIs.</div>
             ) : (
@@ -647,6 +827,7 @@ export default function Home() {
             <div className="sectionHead">
               <div><span className="eyebrow">EVIDENCE → CORRELATION → IMPACT</span><h2>Attack Paths</h2><p>Correlated public evidence that could create a plausible route to application, account or infrastructure impact. Modeled steps are clearly labeled.</p></div>
             </div>
+            <ResultTabs scan={scan} active="attackPaths" onChange={setTab} />
             {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
               <div className="empty">Run Deep Scan to correlate domain-wide evidence into attack paths.</div>
             ) : (scan.attackPaths || []).length ? (
@@ -679,7 +860,7 @@ export default function Home() {
         {!loading && tab === 'codeSecurity' ? (
           <section className="panel">
             <div className="sectionHead">
-              <div><span className="eyebrow">REPOSITORY SECURITY</span><h2>Code Security</h2><p>Scan an authorized GitHub repository for committed secrets, risky artifacts, security-sensitive sinks and pinned dependency advisories.</p></div>
+              <div><span className="eyebrow">SCAN CENTER / CODE SECURITY</span><h2>Code Security</h2><p>Scan an authorized GitHub repository for committed secrets, risky artifacts, security-sensitive sinks and pinned dependency advisories.</p><button className="textLink" onClick={()=>setTab('scans')}>← Back to Scan Center</button></div>
               {latestCodeScan?.remediationPlan?.mode ? <Badge tone={latestCodeScan.remediationPlan.mode === 'ai' ? 'success' : 'neutral'}>{latestCodeScan.remediationPlan.mode === 'ai' ? 'OpenAI generated fixes' : 'Rules remediation'}</Badge> : null}
             </div>
             {!project ? <div className="empty">Select a project first.</div> : (
@@ -722,9 +903,10 @@ export default function Home() {
           <section className="panel authPanel">
             <div className="sectionHead">
               <div>
-                <span className="eyebrow">POST-LOGIN SECURITY VALIDATION</span>
+                <span className="eyebrow">SCAN CENTER / POST-LOGIN VALIDATION</span>
                 <h2>Authenticated Scan</h2>
                 <p>Compare public and authenticated behavior using a dedicated test session. Inspector sends only read-only GET/HEAD requests and never persists the credential.</p>
+                <button className="textLink" onClick={()=>setTab('scans')}>← Back to Scan Center</button>
               </div>
               <div className="authBadges">
                 {latestAuthScan ? <Badge tone={latestAuthScan.status === 'completed' ? 'success' : 'medium'}>{latestAuthScan.status === 'completed_with_gaps' ? 'Completed with gaps' : latestAuthScan.status}</Badge> : null}
@@ -851,6 +1033,7 @@ export default function Home() {
             <div className="sectionHead">
               <div><span className="eyebrow">VERSION-AWARE CVE ENRICHMENT</span><h2>Vulnerabilities</h2><p>CVEs are shown only when Inspector has a versioned technology match that can be checked against NVD.</p></div>
             </div>
+            <ResultTabs scan={scan} active="vulnerabilities" onChange={setTab} />
             {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
               <div className="empty">Run Deep Scan to perform version-aware CVE enrichment across discovered hosts.</div>
             ) : (
@@ -933,6 +1116,7 @@ export default function Home() {
                   <div><span>Console errors</span><b>{scan.metrics.consoleErrors || 0}</b></div>
                   <div><span>Failed requests</span><b>{scan.metrics.failedRequests || 0}</b></div>
                 </div>
+            <ResultTabs scan={scan} active="quality" onChange={setTab} />
                 <div className="assetList">
                   {(scan.findings || []).filter((item)=>['browser','browser-mobile','browser-performance','axe'].includes(item.engine)).map((item)=>(
                     <button className="assetRow" key={item.id} onClick={()=>setFinding(item)}>
@@ -956,6 +1140,7 @@ export default function Home() {
                   <div><span>Technologies</span><b>{scan.metrics.technologies || 0}</b></div>
                   <div><span>Live hosts</span><b>{scan.mode === 'deep' ? (scan.metrics.liveHosts || 0) : (scan.metrics.subdomains || 0)}</b></div>
                 </div>
+            <ResultTabs scan={scan} active="surface" onChange={setTab} />
                 <div className="projectList">
                   <div className="sectionHead"><div><h3>Technology signals</h3></div></div>
                   {(scan.evidence?.inventory?.technologies || []).map((item)=>(
