@@ -175,7 +175,7 @@ export default function Home() {
     const asset = project.assets.find((item) => item.id === assetId) || project.assets[0];
     if (!asset) return;
     setScanning(true);
-    setNotice('Running security, browser QA, TLS, DNS and link checks…');
+    setNotice('Running deep crawl, browser QA, accessibility, security validation, TLS/DNS and API discovery… this can take 20–60 seconds.');
     try {
       const response = await fetch('/api/scan', {
         method: 'POST',
@@ -329,12 +329,23 @@ export default function Home() {
                 <section className="coveragePanel">
                   <div className="sectionHead"><div><span className="eyebrow">ENGINE COVERAGE</span><h3>What ran</h3></div></div>
                   <div className="coverageGrid">
-                    <div><span>Browser QA</span><b>{scan.metrics.browserAvailable ? 'Chromium' : 'Degraded'}</b></div>
-                    <div><span>Page load</span><b>{scan.metrics.browserLoadMs ? scan.metrics.browserLoadMs + ' ms' : '—'}</b></div>
-                    <div><span>Resources</span><b>{scan.metrics.resourceCount || 0}</b></div>
-                    <div><span>Links checked</span><b>{scan.metrics.linksChecked || 0}</b></div>
+                    <div><span>Pages crawled</span><b>{scan.metrics.pagesCrawled || 0}</b></div>
+                    <div><span>Browser renders</span><b>{scan.metrics.browserPages || 0}</b></div>
+                    <div><span>Mobile renders</span><b>{scan.metrics.browserMobilePages || 0}</b></div>
+                    <div><span>A11y violations</span><b>{scan.metrics.accessibilityViolations || 0}</b></div>
+                    <div><span>API paths</span><b>{scan.metrics.apiEndpoints || 0}</b></div>
+                    <div><span>JS bundles</span><b>{scan.metrics.jsBundles || 0}</b></div>
+                    <div><span>Failed requests</span><b>{scan.metrics.failedRequests || 0}</b></div>
                     <div><span>DNS records</span><b>{scan.metrics.dnsRecords || 0}</b></div>
                     <div><span>TLS</span><b>{scan.metrics.tlsProtocol || '—'}</b></div>
+                  </div>
+                  <div className="engineHealth">
+                    {Object.entries(scan.engineStatus || {}).map(([name, state]) => (
+                      <div className="engineRow" key={name}>
+                        <div><strong>{name}</strong><span>{state.pagesTested ? state.pagesTested + ' pages tested' : state.endpoints ? state.endpoints + ' endpoints' : state.protocol || ''}</span></div>
+                        <Badge tone={state.status === 'complete' ? 'success' : state.status === 'failed' ? 'critical' : state.status === 'degraded' ? 'medium' : 'neutral'}>{state.status}</Badge>
+                      </div>
+                    ))}
                   </div>
                 </section>
               </>
@@ -433,7 +444,7 @@ export default function Home() {
                         <td>{item.engine}</td>
                         <td><Badge tone={item.lifecycle === 'new' ? 'purple' : item.lifecycle === 'resolved' ? 'success' : 'neutral'}>{item.lifecycle}</Badge></td>
                         <td><Severity value={item.severity}/></td>
-                        <td>{item.workflowStatus || 'open'}</td>
+                        <td><span>{item.workflowStatus || 'open'}</span><small className="evidenceMeta">{item.confidence} · {item.evidenceQuality || 'observed'}</small></td>
                       </tr>
                     ))}
                   </tbody>
@@ -458,7 +469,7 @@ export default function Home() {
                   <div><span>Failed requests</span><b>{scan.metrics.failedRequests || 0}</b></div>
                 </div>
                 <div className="assetList">
-                  {(scan.findings || []).filter((item)=>item.engine==='browser').map((item)=>(
+                  {(scan.findings || []).filter((item)=>['browser','browser-mobile','browser-performance','axe'].includes(item.engine)).map((item)=>(
                     <button className="assetRow" key={item.id} onClick={()=>setFinding(item)}>
                       <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span></div>
                     </button>
@@ -486,8 +497,10 @@ export default function Home() {
                     <div className="projectRow" key={item.name}><div><strong>{item.name}</strong><span>{item.evidence} · {item.confidence} confidence</span></div></div>
                   ))}
                   <div className="sectionHead"><div><h3>API paths</h3></div></div>
-                  {(scan.evidence?.inventory?.apiEndpoints || []).map((path)=>(
-                    <div className="projectRow" key={path}><div><strong>{path}</strong><span>Observed in same-host application markup/scripts</span></div></div>
+                  {(scan.evidence?.inventory?.apiEndpoints || []).map((item)=>(
+                    <div className="projectRow" key={(item.method || 'OBSERVE') + ' ' + item.path}>
+                      <div><strong>{item.method || 'OBSERVE'} {item.path}</strong><span>Observed via {item.source || 'application evidence'}</span></div>
+                    </div>
                   ))}
                   <div className="sectionHead"><div><h3>Discovered subdomains</h3></div></div>
                   {(scan.evidence?.inventory?.commonSubdomains || []).map((item)=>(
@@ -537,12 +550,14 @@ export default function Home() {
         <div className="backdrop" onClick={()=>setFinding(null)}>
           <aside className="drawer" onClick={(e)=>e.stopPropagation()}>
             <button className="close" onClick={()=>setFinding(null)}>×</button>
-            <div className="drawerBadges"><Severity value={finding.severity}/><Badge>{finding.engine}</Badge><Badge tone="purple">{finding.lifecycle}</Badge></div>
+            <div className="drawerBadges"><Severity value={finding.severity}/><Badge>{finding.engine}</Badge><Badge>{finding.confidence} confidence</Badge><Badge>{finding.evidenceQuality || 'observed'} evidence</Badge><Badge tone="purple">{finding.lifecycle}</Badge></div>
             <h2>{finding.title}</h2>
             <p className="lead">{finding.summary}</p>
             <section><h4>Why it matters</h4><p>{finding.impact}</p></section>
             <section><h4>Evidence</h4><pre>{finding.evidence}</pre></section>
-            <section><h4>Affected location</h4><p>{finding.location || scan?.finalUrl}</p></section>
+            <section><h4>Affected locations</h4>
+              <p>{(finding.affectedLocations || [finding.location || scan?.finalUrl]).slice(0,12).join('\n')}</p>
+            </section>
             <section><h4>Recommended fix</h4><p>{finding.remediation}</p></section>
             <section><h4>Workflow</h4><div className="statusActions">
               <button onClick={()=>setFindingStatus('open')}>Open</button>
