@@ -16,7 +16,8 @@ export async function POST(request) {
       return Response.json({ error: 'Project and asset are required.' }, { status: 400 });
     }
 
-    const scan = await runProjectScan(body.projectId, body.assetId, body.trigger || 'manual');
+    const mode = body.mode === 'deep' ? 'deep' : 'standard';
+    const scan = await runProjectScan(body.projectId, body.assetId, body.trigger || 'manual', mode);
     return Response.json(scan, { headers: { 'cache-control': 'no-store' } });
   } catch (error) {
     return Response.json({ error: error.message || 'Scan failed.' }, { status: 400 });
