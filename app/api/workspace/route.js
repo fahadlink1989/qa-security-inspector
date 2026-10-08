@@ -147,6 +147,27 @@ async function updateFindingStatus(scanId, fingerprint, status) {
   return changed;
 }
 
+async function updateNetworkFindingStatus(projectId, networkScanId, fingerprint, status) {
+  if (!['open','in_progress','resolved','accepted','false_positive'].includes(status)) {
+    throw new Error('Invalid finding status.');
+  }
+
+  let changed = null;
+  await mutateState((state) => {
+    const project = state.projects.find((item) => item.id === projectId);
+    if (!project) throw new Error('Project not found.');
+    const scan = (project.networkScans || []).find((item) => item.id === networkScanId);
+    if (!scan) throw new Error('Network scan not found.');
+    const finding = (scan.findings || []).find((item) => item.fingerprint === fingerprint);
+    if (!finding) throw new Error('Finding not found.');
+    finding.workflowStatus = status;
+    finding.statusUpdatedAt = new Date().toISOString();
+    changed = finding;
+    return state;
+  });
+  return changed;
+}
+
 async function updateAuthFindingStatus(projectId, authScanId, fingerprint, status) {
   if (!['open','in_progress','resolved','accepted','false_positive'].includes(status)) {
     throw new Error('Invalid finding status.');
@@ -196,6 +217,13 @@ export async function POST(request) {
     } else if (body.action === 'retest_finding') {
       const { retestFinding } = await import('../../../lib/scanService');
       result = await retestFinding(body.scanId, body.fingerprint);
+    } else if (body.action === 'network_finding_status') {
+      result = await updateNetworkFindingStatus(
+        body.projectId,
+        body.networkScanId,
+        body.fingerprint,
+        body.status
+      );
     } else if (body.action === 'auth_finding_status') {
       result = await updateAuthFindingStatus(
         body.projectId,
