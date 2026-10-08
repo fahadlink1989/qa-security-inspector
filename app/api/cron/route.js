@@ -17,13 +17,20 @@ export async function GET(request) {
   const results = [];
 
   for (const project of due.slice(0, 2)) {
-    const asset = project.assets?.find((item) => item.status === 'active') || project.assets?.[0];
-    if (!asset) continue;
-    try {
-      const scan = await runProjectScan(project.id, asset.id, 'schedule');
-      results.push({ projectId: project.id, scanId: scan.id, status: 'completed' });
-    } catch (error) {
-      results.push({ projectId: project.id, status: 'failed', error: error.message });
+    const assets=(project.assets||[]).filter((item)=>item.status==='active').slice(0,2);
+    if(!assets.length) continue;
+    for(const asset of assets){
+      try {
+        const scan = await runProjectScan(
+          project.id,
+          asset.id,
+          'schedule',
+          project.scheduledMode==='deep'?'deep':'standard'
+        );
+        results.push({ projectId: project.id, assetId:asset.id, scanId: scan.id, status: 'completed', mode:scan.mode });
+      } catch (error) {
+        results.push({ projectId: project.id, assetId:asset.id, status: 'failed', error: error.message });
+      }
     }
   }
 
