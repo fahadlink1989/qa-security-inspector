@@ -39,9 +39,12 @@ export default function Home(){
   const [riskStatus,setRiskStatus]=useState('All');
   const [selectedRisk,setSelectedRisk]=useState(null);
   const [retesting,setRetesting]=useState(false);
-  const [settings,setSettings]=useState({name:'',schedule:'manual',webhookUrl:''});
+  const [settings,setSettings]=useState({name:'',schedule:'manual',scheduledMode:'standard',webhookUrl:''});
   const [engineStatus,setEngineStatus]=useState(null);
   const [targetUrl,setTargetUrl]=useState('');
+  const [networkForm,setNetworkForm]=useState({label:'',cidr:''});
+  const [networkAuthorized,setNetworkAuthorized]=useState(false);
+  const [networkScanningId,setNetworkScanningId]=useState('');
   const [newScan,setNewScan]=useState({
     type:'deep',
     assetId:'',
@@ -49,7 +52,8 @@ export default function Home(){
     authMethod:'bearer',
     credential:'',
     repositoryUrl:'',
-    repositoryToken:''
+    repositoryToken:'',
+    networkTargetId:''
   });
 
   async function load(preferredProjectId){
@@ -67,8 +71,12 @@ export default function Home(){
       setSelectedProjectId(id);
       const p=json.projects?.find(x=>x.id===id);
       if(p){
-        setSettings({name:p.name,schedule:p.schedule||'manual',webhookUrl:''});
-        setNewScan(prev=>({...prev,assetId:p.assets?.some(a=>a.id===prev.assetId)?prev.assetId:(p.assets?.[0]?.id||'')}));
+        setSettings({name:p.name,schedule:p.schedule||'manual',scheduledMode:p.scheduledMode||'standard',webhookUrl:''});
+        setNewScan(prev=>({
+          ...prev,
+          assetId:p.assets?.some(a=>a.id===prev.assetId)?prev.assetId:(p.assets?.[0]?.id||''),
+          networkTargetId:p.networks?.some(n=>n.id===prev.networkTargetId)?prev.networkTargetId:(p.networks?.[0]?.id||'')
+        }));
       }
     }catch(error){setNotice(error.message);}
     finally{setLoading(false);}
@@ -84,6 +92,16 @@ export default function Home(){
   const project=useMemo(()=>data.projects.find(p=>p.id===selectedProjectId)||null,[data.projects,selectedProjectId]);
   const scans=useMemo(()=>(data.scans||[]).filter(s=>s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId]);
   const latestScan=useMemo(()=>scans[0]||null,[scans]);
+
+  const scanRows=useMemo(()=>{
+    const rows=[
+      ...scans,
+      ...(project?.networkScans||[]).map(item=>({...item,_kind:'network'})),
+      ...(project?.authScans||[]).map(item=>({...item,_kind:'auth'})),
+      ...(project?.codeScans||[]).map(item=>({...item,_kind:'code'}))
+    ];
+    return rows.sort((a,b)=>String(b.completedAt||b.scannedAt||b.startedAt||'').localeCompare(String(a.completedAt||a.scannedAt||a.startedAt||'')));
+  },[scans,project]);
 
   const latestByAsset=useMemo(()=>{
     const map=new Map();
@@ -102,6 +120,13 @@ export default function Home(){
     for(const finding of auth?.findings||[]) rows.push({...finding,_authScanId:auth.id,_auth:true,_scan:auth});
     const code=project?.codeScans?.[0];
     for(const finding of code?.findings||[]) rows.push({...finding,_code:true,_scan:code});
+    const latestNetworks=new Map();
+    for(const scan of project?.networkScans||[]){
+      if(!latestNetworks.has(scan.networkTargetId)) latestNetworks.set(scan.networkTargetId,scan);
+    }
+    for(const networkScan of latestNetworks.values()){
+      for(const finding of networkScan.findings||[]) rows.push({...finding,_network:true,_networkScanId:networkScan.id,_scan:networkScan});
+    }
     const unique=new Map();
     for(const row of rows){
       const key=row.fingerprint||row.id;
@@ -146,8 +171,8 @@ export default function Home(){
     setSelectedProjectId(id);
     const p=data.projects.find(x=>x.id===id);
     if(p){
-      setSettings({name:p.name,schedule:p.schedule||'manual',webhookUrl:''});
-      setNewScan(prev=>({...prev,assetId:p.assets?.[0]?.id||''}));
+      setSettings({name:p.name,schedule:p.schedule||'manual',scheduledMode:p.scheduledMode||'standard',webhookUrl:''});
+      setNewScan(prev=>({...prev,assetId:p.assets?.[0]?.id||'',networkTargetId:p.networks?.[0]?.id||''}));
     }
     setSelectedRisk(null);
   }
@@ -164,11 +189,46 @@ export default function Home(){
     }catch(error){setNotice(error.message);}
   }
 
+  async function addNetworkTarget(event){
+    event.preventDefault();
+    if(!project||!networkForm.cidr) return;
+    try{
+      await workspaceAction({
+        action:'add_network_target',
+        projectId:project.id,
+        cidr:networkForm.cidr,
+        label:networkForm.label
+      });
+      setNetworkForm({label:'',cidr:''});
+      await load(project.id);
+      setNotice('Internal network added. Connect an internal scanner worker and confirm authorization before scanning.');
+    }catch(error){setNotice(error.message);}
+  }
+
+  async function runNetworkScan(networkTargetId){
+    if(!project||!networkAuthorized) return;
+    setNetworkScanningId(networkTargetId);
+    setNotice('Internal network scan started. Naabu will perform rate-limited TCP discovery and Greenbone/OpenVAS will run when configured on the internal worker.');
+    try{
+      const response=await fetch('/api/network-scan',{
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({projectId:project.id,networkTargetId,authorized:true})
+      });
+      const result=await response.json();
+      if(!response.ok) throw new Error(result.error||'Network scan failed.');
+      await load(project.id);
+      setView('risks');
+      setNotice('Internal network scan completed. Review normalized risks and engine coverage.');
+    }catch(error){setNotice(error.message);}
+    finally{setNetworkScanningId('');}
+  }
+
   async function saveSettings(event){
     event.preventDefault();
     if(!project) return;
     try{
-      const patch={name:settings.name,schedule:settings.schedule};
+      const patch={name:settings.name,schedule:settings.schedule,scheduledMode:settings.scheduledMode};
       if(settings.webhookUrl) patch.webhookUrl=settings.webhookUrl;
       await workspaceAction({action:'update_project',projectId:project.id,patch});
       setSettings(prev=>({...prev,webhookUrl:''}));
@@ -180,7 +240,7 @@ export default function Home(){
   async function runNewScan(){
     if(!project) return;
     const asset=project.assets.find(a=>a.id===newScan.assetId)||project.assets[0];
-    if(!asset && newScan.type!=='code') return;
+    if(!asset && !['code','network'].includes(newScan.type)) return;
     if(!newScan.authorized) return;
     setScanRunning(true);
     setNotice('Scan started. Inspector is collecting evidence and normalizing risks…');
@@ -196,6 +256,11 @@ export default function Home(){
         response=await fetch('/api/code-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
           projectId:project.id,repositoryUrl:newScan.repositoryUrl,token:newScan.repositoryToken,authorized:true
         })});
+      }else if(newScan.type==='network'){
+        if(!newScan.networkTargetId) throw new Error('Add an internal network first.');
+        response=await fetch('/api/network-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+          projectId:project.id,networkTargetId:newScan.networkTargetId,authorized:true
+        })});
       }else{
         response=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
           projectId:project.id,assetId:asset.id,authorized:true,mode:newScan.type==='deep'?'deep':'standard'
@@ -206,7 +271,7 @@ export default function Home(){
       setNewScan(prev=>({...prev,credential:'',repositoryToken:'',authorized:false}));
       setNewScanOpen(false);
       await load(project.id);
-      setView(newScan.type==='code'||newScan.type==='authenticated'?'risks':'scans');
+      setView(['code','authenticated','network'].includes(newScan.type)?'risks':'scans');
       setNotice('Scan completed. Review the risks and remediation guidance.');
     }catch(error){setNotice(error.message);}
     finally{setScanRunning(false);}
@@ -216,6 +281,8 @@ export default function Home(){
     try{
       if(risk._auth){
         await workspaceAction({action:'auth_finding_status',projectId:project.id,authScanId:risk._authScanId,fingerprint:risk.fingerprint,status});
+      }else if(risk._network){
+        await workspaceAction({action:'network_finding_status',projectId:project.id,networkScanId:risk._networkScanId,fingerprint:risk.fingerprint,status});
       }else if(risk._scanId){
         await workspaceAction({action:'finding_status',scanId:risk._scanId,fingerprint:risk.fingerprint,status});
       }else{
@@ -240,7 +307,7 @@ export default function Home(){
   }
 
   function openNewScan(assetId){
-    setNewScan(prev=>({...prev,assetId:assetId||prev.assetId||project?.assets?.[0]?.id||'',authorized:false}));
+    setNewScan(prev=>({...prev,assetId:assetId||prev.assetId||project?.assets?.[0]?.id||'',networkTargetId:prev.networkTargetId||project?.networks?.[0]?.id||'',authorized:false}));
     setNewScanOpen(true);
   }
 
@@ -271,6 +338,7 @@ export default function Home(){
             ['scans','◉','Scans'],
             ['risks','⚑','Risks'],
             ['reports','▤','Reports'],
+            ['networks','⌘','Internal Networks'],
             ['settings','⚙','Settings']
           ].map(([key,icon,label])=>(
             <button key={key} className={view===key?'active':''} onClick={()=>setView(key)}>
@@ -330,13 +398,13 @@ export default function Home(){
                   <section className="cardBlock">
                     <div className="blockHead"><h2>Recent scans</h2><button onClick={()=>setView('scans')}>See all scans ›</button></div>
                     <div className="recentList">
-                      {scans.slice(0,5).map(scan=>(
+                      {scanRows.slice(0,5).map(scan=>(
                         <button key={scan.id} className="recentScan" onClick={()=>setView('scans')}>
                           <div><strong>{scanLabel(scan)}</strong><span>{scan.finalUrl||scan.url}</span><small>{fmt(scan.completedAt||scan.startedAt)}</small></div>
                           <div className="scanRight"><Badge tone={statusTone(scan.status)}>{scan.status==='completed_with_gaps'?'Completed with gaps':scan.status}</Badge><span className="score">{scan.score??'—'}</span></div>
                         </button>
                       ))}
-                      {!scans.length?<div className="emptyRow">No scans yet. Start with a Web App Scan.</div>:null}
+                      {!scanRows.length?<div className="emptyRow">No scans yet. Start with a Web App Scan.</div>:null}
                     </div>
                   </section>
 
@@ -405,18 +473,18 @@ export default function Home(){
             {scanTab==='history'?(
               <div className="dataCard">
                 <div className="tableHeader scanGrid"><span>Scan</span><span>Target(s)</span><span>Results</span><span>Created</span><span>Risks</span></div>
-                {scans.map(scan=><div className="tableRow scanGrid" key={scan.id}>
-                  <div className="targetName"><span className="expand">›</span><div><strong>{scanLabel(scan)}</strong><small>{scan.trigger||'manual'}</small></div></div>
-                  <span>{scan.finalUrl||scan.url}</span>
+                {scanRows.map(scan=><div className="tableRow scanGrid" key={scan.id}>
+                  <div className="targetName"><span className="expand">›</span><div><strong>{scanLabel(scan)}</strong><small>{scan.trigger||scan._kind||'manual'}</small>{scan.engineRuns?.length?<div className="engineChips">{scan.engineRuns.map(run=><span key={run.engine} className={'engineChip '+run.status}>{run.name||run.engine} · {run.status}</span>)}</div>:null}</div></div>
+                  <span>{scan.finalUrl||scan.url||scan.target||scan.repository?.url||'Repository scan'}</span>
                   <div><Badge tone={statusTone(scan.status)}>{scan.status==='completed_with_gaps'?'Completed with gaps':scan.status}</Badge><small className="inlineMeta">Score {scan.score??'—'}</small></div>
                   <span>{fmt(scan.completedAt||scan.startedAt)}</span>
                   <div className="riskDots"><span className="dot critical"/>{scan.summary?.critical||0}<span className="dot high"/>{scan.summary?.high||0}<span className="dot medium"/>{scan.summary?.medium||0}<span className="dot low"/>{scan.summary?.low||0}</div>
                 </div>)}
-                {!scans.length?<div className="emptyRow">No scans yet.</div>:null}
+                {!scanRows.length?<div className="emptyRow">No scans yet.</div>:null}
               </div>
             ):(
               <div className="dataCard scheduledCard">
-                <div><strong>{project?.schedule==='daily'?'Daily monitoring':project?.schedule==='weekly'?'Weekly monitoring':'No recurring scan scheduled'}</strong><span>{project?.schedule==='manual'?'Choose Daily or Weekly in Settings to enable recurring scans.':'The scheduler evaluates this workspace automatically.'}</span></div>
+                <div><strong>{project?.schedule==='daily'?'Daily monitoring':project?.schedule==='weekly'?'Weekly monitoring':'No recurring scan scheduled'}</strong><span>{project?.schedule==='manual'?'Choose Daily or Weekly in Settings to enable recurring scans.':((project?.scheduledMode==='deep'?'Attack Surface Scan':'Web App Scan')+' will run against active web targets automatically.')}</span></div>
                 <button className="secondaryBtn" onClick={()=>setView('settings')}>Manage schedule</button>
               </div>
             )}
@@ -482,6 +550,7 @@ export default function Home(){
                   <h2>Workspace</h2>
                   <label>Name<input value={settings.name} onChange={e=>setSettings({...settings,name:e.target.value})}/></label>
                   <label>Monitoring schedule<select value={settings.schedule} onChange={e=>setSettings({...settings,schedule:e.target.value})}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
+                  <label>Scheduled scan profile<select value={settings.scheduledMode} onChange={e=>setSettings({...settings,scheduledMode:e.target.value})}><option value="standard">Web App Scan</option><option value="deep">Attack Surface Scan</option></select></label>
                   <label>Alert webhook<input type="url" placeholder={project.webhookUrl?'Webhook configured — enter a new URL to replace':'https://hooks.slack.com/...'} value={settings.webhookUrl} onChange={e=>setSettings({...settings,webhookUrl:e.target.value})}/></label>
                   <button className="primaryBtn">Save settings</button>
                 </form>
@@ -493,6 +562,7 @@ export default function Home(){
                     <div><strong>Playwright + axe-core</strong><span>Rendered browser QA and accessibility</span><Badge tone="success">Connected</Badge></div>
                     <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
                     <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
+                    <div><strong>Naabu</strong><span>Rate-limited TCP port discovery</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
                     <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
                     <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
                   </div>
@@ -514,11 +584,13 @@ export default function Home(){
                 ['standard','Web App Scan','Fast baseline','Headers, TLS/DNS, browser QA, accessibility, API discovery and safe exposure checks.'],
                 ['deep','Attack Surface Scan','Recommended','Subdomains, live hosts, pages, APIs, CVEs, exposed artifacts and attack paths.'],
                 ['authenticated','Authenticated Web/API','Post-login','Compare public vs authorized test-session behavior with read-only requests.'],
-                ['code','Code & Dependencies','Repository','Secrets, risky files, pinned dependencies and security-sensitive code patterns.']
+                ['code','Code & Dependencies','Repository','Secrets, risky files, pinned dependencies and security-sensitive code patterns.'],
+                ['network','Internal Network','Private worker','Rate-limited port discovery plus Greenbone/OpenVAS from an authorized internal worker.']
               ].map(([key,title,kicker,desc])=><button key={key} className={newScan.type===key?'selected':''} onClick={()=>setNewScan({...newScan,type:key})}><span>{kicker}</span><strong>{title}</strong><small>{desc}</small></button>)}
             </div>
 
-            {newScan.type!=='code'?<label className="field">Target<select value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {!['code','network'].includes(newScan.type)?<label className="field">Target<select value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {newScan.type==='network'?<label className="field">Internal network<select value={newScan.networkTargetId} onChange={e=>setNewScan({...newScan,networkTargetId:e.target.value})}><option value="">Select network</option>{(project?.networks||[]).map(n=><option key={n.id} value={n.id}>{n.label} · {n.cidr}</option>)}</select><small>Internal scans require the scanner worker to run where it can reach this private CIDR.</small></label>:null}
 
             {newScan.type==='authenticated'?<>
               <label className="field">Session type<select value={newScan.authMethod} onChange={e=>setNewScan({...newScan,authMethod:e.target.value})}><option value="bearer">Bearer token</option><option value="cookie">Cookie header</option></select></label>
