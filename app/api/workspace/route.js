@@ -1,4 +1,4 @@
-import { addAsset, createProject, getWorkspaceView, updateFindingStatus, updateProject } from '../../../lib/platform';
+import { addAsset, createProject, getWorkspaceView, retestFinding, updateFindingStatus, updateProject } from '../../../lib/platform';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,6 +23,8 @@ export async function POST(request) {
       result = await addAsset(body.projectId, body);
     } else if (body.action === 'finding_status') {
       result = await updateFindingStatus(body.scanId, body.fingerprint, body.status);
+    } else if (body.action === 'retest_finding') {
+      result = await retestFinding(body.scanId, body.fingerprint);
     } else {
       throw new Error('Unknown action.');
     }
