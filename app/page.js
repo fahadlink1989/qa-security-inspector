@@ -1106,6 +1106,7 @@ export default function Home() {
         {!loading && tab === 'quality' ? (
           <section className="panel">
             <div className="sectionHead"><div><span className="eyebrow">REAL BROWSER ENGINE</span><h2>Browser QA</h2><p>Rendered Chromium signals, runtime errors, network failures and basic accessibility checks.</p></div></div>
+            <ResultTabs scan={scan} active="quality" onChange={setTab} />
             {!scan ? <div className="empty">Run a scan to populate browser QA.</div> : (
               <>
                 <div className="coverageGrid">
@@ -1116,7 +1117,6 @@ export default function Home() {
                   <div><span>Console errors</span><b>{scan.metrics.consoleErrors || 0}</b></div>
                   <div><span>Failed requests</span><b>{scan.metrics.failedRequests || 0}</b></div>
                 </div>
-            <ResultTabs scan={scan} active="quality" onChange={setTab} />
                 <div className="assetList">
                   {(scan.findings || []).filter((item)=>['browser','browser-mobile','browser-performance','axe'].includes(item.engine)).map((item)=>(
                     <button className="assetRow" key={item.id} onClick={()=>setFinding(item)}>
@@ -1132,6 +1132,7 @@ export default function Home() {
         {!loading && tab === 'surface' ? (
           <section className="panel">
             <div className="sectionHead"><div><span className="eyebrow">DISCOVERY & INVENTORY</span><h2>Attack surface</h2><p>Crawled pages, API paths, technology signals and common public subdomains observed by the scan.</p></div></div>
+            <ResultTabs scan={scan} active="surface" onChange={setTab} />
             {!scan ? <div className="empty">Run a scan to populate discovery.</div> : (
               <>
                 <div className="coverageGrid">
@@ -1140,7 +1141,6 @@ export default function Home() {
                   <div><span>Technologies</span><b>{scan.metrics.technologies || 0}</b></div>
                   <div><span>Live hosts</span><b>{scan.mode === 'deep' ? (scan.metrics.liveHosts || 0) : (scan.metrics.subdomains || 0)}</b></div>
                 </div>
-            <ResultTabs scan={scan} active="surface" onChange={setTab} />
                 <div className="projectList">
                   <div className="sectionHead"><div><h3>Technology signals</h3></div></div>
                   {(scan.evidence?.inventory?.technologies || []).map((item)=>(
