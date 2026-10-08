@@ -43,6 +43,8 @@ export default function Home() {
   });
   const [assetUrl, setAssetUrl] = useState('');
   const [settings, setSettings] = useState({ name: '', schedule: 'manual', webhookUrl: '' });
+  const [codeForm, setCodeForm] = useState({ repositoryUrl:'', token:'', authorized:false });
+  const [codeScanning, setCodeScanning] = useState(false);
 
   async function refresh(preferredProjectId, preferredScanId) {
     setLoading(true);
@@ -94,6 +96,11 @@ export default function Home() {
   const findingGuidance = useMemo(
     () => finding ? scan?.remediationPlan?.findingGuidance?.[finding.fingerprint] || null : null,
     [scan, finding]
+  );
+
+  const latestCodeScan = useMemo(
+    () => project?.codeScans?.[0] || null,
+    [project]
   );
 
   const findings = useMemo(() => {
@@ -194,15 +201,44 @@ export default function Home() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Scan failed.');
       await refresh(project.id, result.id);
-      setTab(mode === 'deep' ? 'remediation' : 'findings');
+      setTab(mode === 'deep' ? 'attackPaths' : 'findings');
       setNotice(mode === 'deep'
-        ? 'Deep Scan completed. Review Vulnerabilities, Discovery and Fix Center.'
+        ? 'Deep Scan completed. Review Exposures, API Security, Attack Paths, Vulnerabilities and Fix Center.'
         : 'Standard Scan completed.');
     } catch (error) {
       setNotice(error.message);
     } finally {
       setScanning(false);
       setActiveScanMode('');
+    }
+  }
+
+  async function runCodeSecurity(event) {
+    event.preventDefault();
+    if (!project || !codeForm.repositoryUrl || !codeForm.authorized) return;
+    setCodeScanning(true);
+    setNotice('Scanning repository files, high-confidence secrets, security-sensitive code sinks and pinned dependencies…');
+    try {
+      const response = await fetch('/api/code-scan', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          projectId:project.id,
+          repositoryUrl:codeForm.repositoryUrl,
+          token:codeForm.token,
+          authorized:true
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Code Security scan failed.');
+      setCodeForm((prev)=>({...prev,token:''}));
+      await refresh(project.id, scan?.id);
+      setTab('codeSecurity');
+      setNotice('Code Security scan completed. Repository credentials were not persisted.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setCodeScanning(false);
     }
   }
 
@@ -255,7 +291,11 @@ export default function Home() {
             ['assets','Assets'],
             ['scans','Scans'],
             ['findings','Findings'],
+            ['exposures','Exposures'],
+            ['apiSecurity','API Security'],
+            ['attackPaths','Attack Paths'],
             ['vulnerabilities','Vulnerabilities'],
+            ['codeSecurity','Code Security'],
             ['remediation','Fix Center'],
             ['quality','Browser QA'],
             ['surface','Discovery'],
@@ -477,6 +517,148 @@ export default function Home() {
         ) : null}
 
 
+
+
+        {!loading && tab === 'exposures' ? (
+          <section className="panel">
+            <div className="sectionHead">
+              <div><span className="eyebrow">VALIDATED INTERNET EXPOSURES</span><h2>Exposures</h2><p>Public artifacts, administrative surfaces, debug endpoints and DNS conditions validated with low-impact requests.</p></div>
+            </div>
+            {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
+              <div className="empty">Run Deep Scan to validate exposures across discovered public hosts.</div>
+            ) : (
+              <>
+                <div className="coverageGrid">
+                  <div><span>Exposure findings</span><b>{scan.metrics.exposuresValidated || 0}</b></div>
+                  <div><span>Hosts tested</span><b>{scan.evidence?.deep?.exposureValidation?.hostsTested || 0}</b></div>
+                  <div><span>Live hosts</span><b>{scan.metrics.liveHosts || 0}</b></div>
+                  <div><span>Attack paths</span><b>{scan.metrics.attackPaths || 0}</b></div>
+                </div>
+                <div className="assetList">
+                  {(scan.findings || []).filter((item)=>item.category==='Exposure').length ? (
+                    (scan.findings || []).filter((item)=>item.category==='Exposure').map((item)=>(
+                      <button className="assetRow" key={item.id} onClick={()=>setFinding(item)}>
+                        <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span></div>
+                        <Badge tone={item.evidenceQuality === 'validated' ? 'success' : 'medium'}>{item.evidenceQuality}</Badge>
+                      </button>
+                    ))
+                  ) : <div className="empty">No validated high-confidence exposure finding was produced by this Deep Scan.</div>}
+                </div>
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {!loading && tab === 'apiSecurity' ? (
+          <section className="panel">
+            <div className="sectionHead">
+              <div><span className="eyebrow">SAFE AUTHORIZATION VALIDATION</span><h2>API Security</h2><p>Inspector tests only safe first-party GET/HEAD endpoints and never sends state-changing API payloads.</p></div>
+            </div>
+            {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
+              <div className="empty">Run Deep Scan to classify and safely validate discovered APIs.</div>
+            ) : (
+              <>
+                <div className="coverageGrid">
+                  <div><span>Domain APIs</span><b>{scan.metrics.domainApiEndpoints || 0}</b></div>
+                  <div><span>Safely tested</span><b>{scan.metrics.apiSecurityEndpointsTested || 0}</b></div>
+                  <div><span>Security findings</span><b>{(scan.findings || []).filter((item)=>item.category==='API Security').length}</b></div>
+                  <div><span>OpenAPI sources</span><b>{(scan.evidence?.deep?.hosts || []).reduce((sum,h)=>sum+(h.openApiSpecs?.length || 0),0)}</b></div>
+                </div>
+                <div className="assetList">
+                  {(scan.findings || []).filter((item)=>item.category==='API Security').map((item)=>(
+                    <button className="assetRow" key={item.id} onClick={()=>setFinding(item)}>
+                      <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span></div>
+                    </button>
+                  ))}
+                  {!(scan.findings || []).some((item)=>item.category==='API Security') ? <div className="empty">No unauthenticated API exposure was validated in the endpoints safe to test.</div> : null}
+                </div>
+                <div className="projectList">
+                  <div className="sectionHead"><div><h3>Validated endpoint responses</h3></div></div>
+                  {(scan.evidence?.deep?.apiSecurity?.coverage || []).slice(0,80).map((item)=>(
+                    <div className="projectRow" key={item.url}>
+                      <div><strong>HTTP {item.status} · {item.endpoint?.classification || 'Unknown'} · {item.url}</strong><span>{item.bodyKind}{item.sensitiveKeys?.length ? ' · sensitive field names: '+item.sensitiveKeys.join(', ') : ''}</span></div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {!loading && tab === 'attackPaths' ? (
+          <section className="panel">
+            <div className="sectionHead">
+              <div><span className="eyebrow">EVIDENCE → CORRELATION → IMPACT</span><h2>Attack Paths</h2><p>Correlated public evidence that could create a plausible route to application, account or infrastructure impact. Modeled steps are clearly labeled.</p></div>
+            </div>
+            {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
+              <div className="empty">Run Deep Scan to correlate domain-wide evidence into attack paths.</div>
+            ) : (scan.attackPaths || []).length ? (
+              <div className="pathList">
+                {(scan.attackPaths || []).map((path)=>(
+                  <article className="pathCard" key={path.id}>
+                    <div className="pathHead">
+                      <div><Severity value={path.risk}/><h3>{path.title}</h3></div>
+                      <div><Badge>{path.confidence} confidence</Badge><Badge tone={path.status === 'validated' ? 'success' : 'medium'}>{path.status}</Badge></div>
+                    </div>
+                    <p>{path.summary}</p>
+                    <div className="pathSteps">
+                      {(path.steps || []).map((step,index)=>(
+                        <div className={'pathStep '+step.type} key={index}>
+                          <Badge tone={step.type === 'observed' ? 'success' : step.type === 'impact' ? 'high' : step.type === 'correlated' ? 'purple' : 'medium'}>{step.type}</Badge>
+                          <strong>{step.label}</strong>
+                          <span>{step.evidence}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="pathImpact"><strong>Potential impact</strong><p>{path.impact}</p></div>
+                    <div className="pathImpact"><strong>Recommended action</strong><p>{path.remediation}</p></div>
+                  </article>
+                ))}
+              </div>
+            ) : <div className="empty">No meaningful multi-step attack path was correlated from this scan.</div>}
+          </section>
+        ) : null}
+
+        {!loading && tab === 'codeSecurity' ? (
+          <section className="panel">
+            <div className="sectionHead">
+              <div><span className="eyebrow">REPOSITORY SECURITY</span><h2>Code Security</h2><p>Scan an authorized GitHub repository for committed secrets, risky artifacts, security-sensitive sinks and pinned dependency advisories.</p></div>
+              {latestCodeScan?.remediationPlan?.mode ? <Badge tone={latestCodeScan.remediationPlan.mode === 'ai' ? 'success' : 'neutral'}>{latestCodeScan.remediationPlan.mode === 'ai' ? 'OpenAI generated fixes' : 'Rules remediation'}</Badge> : null}
+            </div>
+            {!project ? <div className="empty">Select a project first.</div> : (
+              <>
+                <form className="settingsForm codeForm" onSubmit={runCodeSecurity}>
+                  <label>GitHub repository URL<input type="url" required placeholder="https://github.com/org/repository" value={codeForm.repositoryUrl} onChange={(e)=>setCodeForm({...codeForm,repositoryUrl:e.target.value})}/></label>
+                  <label>Private repository token (optional)<input type="password" autoComplete="off" placeholder="Used only for this request; never stored" value={codeForm.token} onChange={(e)=>setCodeForm({...codeForm,token:e.target.value})}/></label>
+                  <label className="confirm"><input type="checkbox" checked={codeForm.authorized} onChange={(e)=>setCodeForm({...codeForm,authorized:e.target.checked})}/>I own this repository or have explicit permission to scan its source.</label>
+                  <p className="help">Inspector never persists the supplied GitHub token or secret values found in files. Secret findings contain only pattern type, file and line.</p>
+                  <button className="primary" disabled={!codeForm.authorized || codeScanning}>{codeScanning ? 'Scanning repository…' : 'Run Code Security'}</button>
+                </form>
+
+                {latestCodeScan ? (
+                  <>
+                    <div className="coverageGrid codeMetrics">
+                      <div><span>Repository files</span><b>{latestCodeScan.stats?.repositoryFiles || 0}</b></div>
+                      <div><span>Files inspected</span><b>{latestCodeScan.stats?.filesScanned || 0}</b></div>
+                      <div><span>Dependencies checked</span><b>{latestCodeScan.stats?.dependenciesChecked || 0}</b></div>
+                      <div><span>Advisories</span><b>{latestCodeScan.stats?.advisories || 0}</b></div>
+                    </div>
+                    <div className="fixSummary"><strong>{latestCodeScan.repository?.owner}/{latestCodeScan.repository?.repo}</strong><p>{latestCodeScan.remediationPlan?.executiveSummary || 'Review findings below.'}</p><span>{formatDate(latestCodeScan.scannedAt)} · {latestCodeScan.private ? 'private repository' : 'public repository'}</span></div>
+                    <div className="assetList">
+                      {(latestCodeScan.findings || []).map((item)=>(
+                        <div className="assetRow" key={item.id}>
+                          <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.location} · {item.summary}</span><small className="evidenceMeta">{item.confidence} · {item.evidenceQuality}</small></div>
+                          <div className="codeFix"><strong>Fix</strong><span>{item.remediation}</span></div>
+                        </div>
+                      ))}
+                      {!(latestCodeScan.findings || []).length ? <div className="empty">No high-confidence repository finding was detected within the bounded code scan.</div> : null}
+                    </div>
+                  </>
+                ) : <div className="empty">No Code Security scan has been run for this project yet.</div>}
+              </>
+            )}
+          </section>
+        ) : null}
 
         {!loading && tab === 'vulnerabilities' ? (
           <section className="panel">
