@@ -45,6 +45,8 @@ export default function Home() {
   const [settings, setSettings] = useState({ name: '', schedule: 'manual', webhookUrl: '' });
   const [codeForm, setCodeForm] = useState({ repositoryUrl:'', token:'', authorized:false });
   const [codeScanning, setCodeScanning] = useState(false);
+  const [authForm, setAuthForm] = useState({ method:'bearer', credential:'', authorized:false });
+  const [authScanning, setAuthScanning] = useState(false);
 
   async function refresh(preferredProjectId, preferredScanId) {
     setLoading(true);
@@ -100,6 +102,11 @@ export default function Home() {
 
   const latestCodeScan = useMemo(
     () => project?.codeScans?.[0] || null,
+    [project]
+  );
+
+  const latestAuthScan = useMemo(
+    () => project?.authScans?.[0] || null,
     [project]
   );
 
@@ -213,6 +220,37 @@ export default function Home() {
     }
   }
 
+  async function runAuthenticatedSecurity(event) {
+    event.preventDefault();
+    if (!project || !project.assets?.[0] || !authForm.credential || !authForm.authorized) return;
+    setAuthScanning(true);
+    setNotice('Running authenticated comparison with an ephemeral test session. Credentials will not be persisted…');
+    try {
+      const asset = project.assets[0];
+      const response = await fetch('/api/auth-scan', {
+        method:'POST',
+        headers:{'content-type':'application/json'},
+        body:JSON.stringify({
+          projectId:project.id,
+          assetId:asset.id,
+          authorized:true,
+          authType:authForm.method,
+          credential:authForm.credential
+        })
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error || 'Authenticated Scan failed.');
+      setAuthForm((prev)=>({...prev,credential:''}));
+      await refresh(project.id, scan?.id);
+      setTab('authenticated');
+      setNotice('Authenticated Scan completed. The supplied session credential was not stored.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setAuthScanning(false);
+    }
+  }
+
   async function runCodeSecurity(event) {
     event.preventDefault();
     if (!project || !codeForm.repositoryUrl || !codeForm.authorized) return;
@@ -294,6 +332,7 @@ export default function Home() {
             ['exposures','Exposures'],
             ['apiSecurity','API Security'],
             ['attackPaths','Attack Paths'],
+            ['authenticated','Authenticated'],
             ['vulnerabilities','Vulnerabilities'],
             ['codeSecurity','Code Security'],
             ['remediation','Fix Center'],
@@ -655,6 +694,101 @@ export default function Home() {
                     </div>
                   </>
                 ) : <div className="empty">No Code Security scan has been run for this project yet.</div>}
+              </>
+            )}
+          </section>
+        ) : null}
+
+
+        {!loading && tab === 'authenticated' ? (
+          <section className="panel authPanel">
+            <div className="sectionHead">
+              <div>
+                <span className="eyebrow">POST-LOGIN SECURITY VALIDATION</span>
+                <h2>Authenticated Scan</h2>
+                <p>Compare public and authenticated behavior using a dedicated test session. Inspector sends only read-only GET/HEAD requests and never persists the credential.</p>
+              </div>
+              {latestAuthScan ? <Badge tone={latestAuthScan.status === 'completed' ? 'success' : 'medium'}>{latestAuthScan.status === 'completed_with_gaps' ? 'Completed with gaps' : latestAuthScan.status}</Badge> : null}
+            </div>
+
+            {!project ? <div className="empty">Select a project first.</div> : (
+              <>
+                <form className="settingsForm authForm" onSubmit={runAuthenticatedSecurity}>
+                  <label>Session type
+                    <select value={authForm.method} onChange={(e)=>setAuthForm({...authForm,method:e.target.value})}>
+                      <option value="bearer">Bearer token</option>
+                      <option value="cookie">Cookie header</option>
+                    </select>
+                  </label>
+                  <label>{authForm.method === 'cookie' ? 'Cookie header' : 'Bearer token'}
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      placeholder={authForm.method === 'cookie' ? 'session=…; other_cookie=…' : 'eyJ… or application test token'}
+                      value={authForm.credential}
+                      onChange={(e)=>setAuthForm({...authForm,credential:e.target.value})}
+                    />
+                  </label>
+                  <label className="confirm"><input type="checkbox" checked={authForm.authorized} onChange={(e)=>setAuthForm({...authForm,authorized:e.target.checked})}/>I confirm this is an authorized test account/session and I have permission to assess post-login behavior.</label>
+                  <p className="help">The credential is kept in memory only for this request, injected only into first-party requests, and removed from the UI immediately after completion. It is never written to project state or scan history.</p>
+                  <button className="primary" disabled={!authForm.authorized || !authForm.credential || authScanning}>{authScanning ? 'Authenticated scanning…' : 'Run Authenticated Scan'}</button>
+                </form>
+
+                {latestAuthScan ? (
+                  <>
+                    <div className="coverageGrid authMetrics">
+                      <div><span>Authenticated pages</span><b>{latestAuthScan.metrics?.authenticatedPages || 0}</b></div>
+                      <div><span>Protected pages</span><b>{latestAuthScan.metrics?.protectedPages || 0}</b></div>
+                      <div><span>APIs compared</span><b>{latestAuthScan.metrics?.endpointsTested || 0}</b></div>
+                      <div><span>Protected APIs</span><b>{latestAuthScan.metrics?.protectedEndpoints || 0}</b></div>
+                      <div><span>Needs validation</span><b>{latestAuthScan.metrics?.suspiciousPublicEndpoints || 0}</b></div>
+                      <div><span>Browser renders</span><b>{latestAuthScan.metrics?.browserPages || 0}</b></div>
+                    </div>
+
+                    <div className="fixSummary">
+                      <strong>Authenticated coverage</strong>
+                      <p>{latestAuthScan.executiveSummary}</p>
+                      <span>{formatDate(latestAuthScan.completedAt)} · {latestAuthScan.auth?.method} session · credential not persisted</span>
+                    </div>
+
+                    <div className="sectionHead authSubhead"><div><h3>Authorization findings</h3><p>Only findings supported by public-vs-authenticated comparison are shown here.</p></div></div>
+                    <div className="assetList">
+                      {(latestAuthScan.findings || []).length ? (latestAuthScan.findings || []).map((item)=>(
+                        <div className="assetRow" key={item.id}>
+                          <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span><small className="evidenceMeta">{item.location} · {item.confidence} · {item.evidenceQuality}</small></div>
+                          <div className="codeFix"><strong>Fix</strong><span>{item.remediation}</span></div>
+                        </div>
+                      )) : <div className="empty">No authorization weakness was validated with the supplied session.</div>}
+                    </div>
+
+                    <div className="authColumns">
+                      <div className="projectList">
+                        <div className="sectionHead"><div><h3>Protected pages</h3></div></div>
+                        {(latestAuthScan.protectedSurface?.pages || []).length ? (latestAuthScan.protectedSurface.pages || []).map((item)=>(
+                          <div className="projectRow" key={item.url}><div><strong>{item.url}</strong><span>Public HTTP {item.unauthStatus ?? '—'} → session HTTP {item.authStatus ?? '—'}{item.title ? ' · '+item.title : ''}</span></div></div>
+                        )) : <div className="empty">No page was confirmed as session-protected in this run.</div>}
+                      </div>
+
+                      <div className="projectList">
+                        <div className="sectionHead"><div><h3>Protected APIs</h3></div></div>
+                        {(latestAuthScan.protectedSurface?.endpoints || []).length ? (latestAuthScan.protectedSurface.endpoints || []).map((item)=>(
+                          <div className="projectRow" key={item.method+' '+item.url}><div><strong>{item.method} {item.url}</strong><span>{item.classification} · public HTTP {item.unauthStatus ?? '—'} → session HTTP {item.authStatus ?? '—'}</span></div></div>
+                        )) : <div className="empty">No API endpoint was confirmed as session-protected in this run.</div>}
+                      </div>
+                    </div>
+
+                    <div className="projectList">
+                      <div className="sectionHead"><div><h3>Endpoint comparison</h3><p>Response values are not stored; only status, schema-like field names and comparison signals are retained.</p></div></div>
+                      {(latestAuthScan.endpointCoverage || []).slice(0,100).map((item)=>(
+                        <div className="projectRow" key={item.method+' '+item.url}>
+                          <div><strong>{item.method} {item.url}</strong><span>{item.classification || 'Unknown'} · public {item.unauthStatus ?? '—'} · session {item.authStatus ?? '—'}{item.protected ? ' · protected' : ''}{item.sameAsUnauthenticated ? ' · same response signature' : ''}</span></div>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <div className="empty">Run Deep Scan first for the richest endpoint inventory, then use a dedicated test session here to validate the post-login surface.</div>
+                )}
               </>
             )}
           </section>
