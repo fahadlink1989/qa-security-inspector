@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import net from 'node:net';
 import { latestScanForProject, makeProject, mutateState, readState } from '../../../lib/store';
 
 export const runtime = 'nodejs';
@@ -57,6 +58,7 @@ async function updateProject(projectId, patch) {
     if (!project) throw new Error('Project not found.');
     if (typeof patch.name === 'string' && patch.name.trim()) project.name = patch.name.trim();
     if (['manual','daily','weekly'].includes(patch.schedule)) project.schedule = patch.schedule;
+    if (['standard','deep'].includes(patch.scheduledMode)) project.scheduledMode = patch.scheduledMode;
     if (typeof patch.description === 'string') project.description = patch.description.slice(0,500);
     if (typeof patch.webhookUrl === 'string') project.webhookUrl = patch.webhookUrl.trim();
     output = project;
@@ -86,6 +88,44 @@ async function addAsset(projectId, input) {
   });
 
   return asset;
+}
+
+function privateIpv4(ip){
+  const parts=String(ip||'').split('.').map(Number);
+  if(parts.length!==4||parts.some((n)=>!Number.isInteger(n)||n<0||n>255)) return false;
+  return parts[0]===10 ||
+    (parts[0]===172&&parts[1]>=16&&parts[1]<=31) ||
+    (parts[0]===192&&parts[1]===168);
+}
+
+function validatePrivateCidr(value){
+  const [ip,prefixRaw]=String(value||'').trim().split('/');
+  const prefix=Number(prefixRaw);
+  if(net.isIP(ip)!==4 || !privateIpv4(ip) || !Number.isInteger(prefix) || prefix<24 || prefix>32){
+    throw new Error('Internal networks must be an RFC1918 IPv4 CIDR between /24 and /32.');
+  }
+  return ip+'/'+prefix;
+}
+
+async function addNetworkTarget(projectId,input){
+  const cidr=validatePrivateCidr(input.cidr);
+  let target=null;
+  await mutateState((state)=>{
+    const project=state.projects.find((item)=>item.id===projectId);
+    if(!project) throw new Error('Project not found.');
+    project.networks=Array.isArray(project.networks)?project.networks:[];
+    if(project.networks.some((item)=>item.cidr===cidr)) throw new Error('This network is already registered.');
+    target={
+      id:crypto.randomUUID(),
+      cidr,
+      label:String(input.label||cidr).slice(0,100),
+      status:'active',
+      createdAt:new Date().toISOString()
+    };
+    project.networks.push(target);
+    return state;
+  });
+  return target;
 }
 
 async function updateFindingStatus(scanId, fingerprint, status) {
@@ -149,6 +189,8 @@ export async function POST(request) {
       result = await updateProject(body.projectId, body.patch || {});
     } else if (body.action === 'add_asset') {
       result = await addAsset(body.projectId, body);
+    } else if (body.action === 'add_network_target') {
+      result = await addNetworkTarget(body.projectId, body);
     } else if (body.action === 'finding_status') {
       result = await updateFindingStatus(body.scanId, body.fingerprint, body.status);
     } else if (body.action === 'retest_finding') {
