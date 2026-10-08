@@ -16,6 +16,7 @@
     "pdf-lib": "1.17.1",
     "playwright-core": "latest",
     "@sparticuz/chromium": "latest",
-    "axe-core": "4.10.3"
+    "axe-core": "4.10.3",
+    "ai": "7.0.130"
   }
 }
