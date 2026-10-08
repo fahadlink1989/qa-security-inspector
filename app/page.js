@@ -743,6 +743,7 @@ export default function Home() {
                       <div><span>Protected APIs</span><b>{latestAuthScan.metrics?.protectedEndpoints || 0}</b></div>
                       <div><span>Needs validation</span><b>{latestAuthScan.metrics?.suspiciousPublicEndpoints || 0}</b></div>
                       <div><span>Browser renders</span><b>{latestAuthScan.metrics?.browserPages || 0}</b></div>
+                      <div><span>Session effect</span><b>{latestAuthScan.metrics?.sessionEffectConfirmed ? 'Confirmed' : 'Unconfirmed'}</b></div>
                     </div>
 
                     <div className="fixSummary">
