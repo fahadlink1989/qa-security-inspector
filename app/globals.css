@@ -233,3 +233,28 @@ td:first-child span{margin-top:4px;color:#7e8996;font-size:10px;line-height:1.45
 .guidanceMeta span{font-size:9px;border:1px solid #333d4a;border-radius:999px;padding:4px 8px;color:#9da9b6}
 .scanModeBadge{font-size:9px}
 @media(max-width:800px){.actionColumns{grid-template-columns:1fr}.vulnTop,.actionHead{display:grid}.actionOwner{justify-items:start;text-align:left}}
+
+.pathList{display:grid;gap:14px;margin-top:18px}
+.pathCard{border:1px solid #2b3440;background:#12171e;border-radius:14px;padding:18px}
+.pathHead{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}
+.pathHead>div{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+.pathHead h3{margin:0;font-size:16px}
+.pathCard>p{color:#97a2af;font-size:12px;line-height:1.55}
+.pathSteps{display:grid;gap:8px;margin:15px 0}
+.pathStep{display:grid;grid-template-columns:auto minmax(150px,.8fr) minmax(0,2fr);gap:10px;align-items:start;border:1px solid #28313b;background:#0f141a;border-radius:10px;padding:10px 11px}
+.pathStep strong{font-size:11px}
+.pathStep span:last-child{font-size:10px;line-height:1.5;color:#8995a3;white-space:pre-line;word-break:break-word}
+.pathImpact{border-top:1px solid #28313b;padding-top:11px;margin-top:11px}
+.pathImpact strong{font-size:11px}
+.pathImpact p{margin:5px 0 0;color:#9ca7b3;font-size:11px;line-height:1.55}
+.codeForm{margin-bottom:18px}
+.codeMetrics{margin:16px 0}
+.codeFix{max-width:42%;display:grid!important;gap:4px;text-align:left}
+.codeFix strong{font-size:10px!important;color:#c5ccd6}
+.codeFix span{font-size:10px!important;line-height:1.45;white-space:normal!important}
+.assetRow>.badge{flex:none}
+@media(max-width:760px){
+  .pathHead{display:grid}
+  .pathStep{grid-template-columns:1fr}
+  .codeFix{max-width:100%}
+}
