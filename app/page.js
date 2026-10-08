@@ -251,6 +251,23 @@ export default function Home() {
     }
   }
 
+  async function setAuthFindingStatus(findingItem, status) {
+    if (!project || !latestAuthScan || !findingItem) return;
+    try {
+      await api({
+        action:'auth_finding_status',
+        projectId:project.id,
+        authScanId:latestAuthScan.id,
+        fingerprint:findingItem.fingerprint,
+        status
+      });
+      await refresh(project.id, scan?.id);
+      setNotice('Authenticated finding marked ' + status.replaceAll('_',' ') + '. Use a fresh test session to validate the fix.');
+    } catch (error) {
+      setNotice(error.message);
+    }
+  }
+
   async function runCodeSecurity(event) {
     event.preventDefault();
     if (!project || !codeForm.repositoryUrl || !codeForm.authorized) return;
@@ -708,7 +725,10 @@ export default function Home() {
                 <h2>Authenticated Scan</h2>
                 <p>Compare public and authenticated behavior using a dedicated test session. Inspector sends only read-only GET/HEAD requests and never persists the credential.</p>
               </div>
-              {latestAuthScan ? <Badge tone={latestAuthScan.status === 'completed' ? 'success' : 'medium'}>{latestAuthScan.status === 'completed_with_gaps' ? 'Completed with gaps' : latestAuthScan.status}</Badge> : null}
+              <div className="authBadges">
+                {latestAuthScan ? <Badge tone={latestAuthScan.status === 'completed' ? 'success' : 'medium'}>{latestAuthScan.status === 'completed_with_gaps' ? 'Completed with gaps' : latestAuthScan.status}</Badge> : null}
+                {latestAuthScan?.remediationPlan?.mode ? <Badge tone={latestAuthScan.remediationPlan.mode === 'ai' ? 'success' : 'neutral'}>{latestAuthScan.remediationPlan.mode === 'ai' ? 'OpenAI fixes' : 'Rules fixes'}</Badge> : null}
+              </div>
             </div>
 
             {!project ? <div className="empty">Select a project first.</div> : (
@@ -755,12 +775,42 @@ export default function Home() {
                     <div className="sectionHead authSubhead"><div><h3>Authorization findings</h3><p>Only findings supported by public-vs-authenticated comparison are shown here.</p></div></div>
                     <div className="assetList">
                       {(latestAuthScan.findings || []).length ? (latestAuthScan.findings || []).map((item)=>(
-                        <div className="assetRow" key={item.id}>
-                          <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span><small className="evidenceMeta">{item.location} · {item.confidence} · {item.evidenceQuality}</small></div>
-                          <div className="codeFix"><strong>Fix</strong><span>{item.remediation}</span></div>
+                        <div className="assetRow authFindingRow" key={item.id}>
+                          <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span><small className="evidenceMeta">{item.location} · {item.confidence} · {item.evidenceQuality} · {item.workflowStatus || 'open'}</small></div>
+                          <div className="authFindingActions">
+                            <div className="codeFix"><strong>Fix</strong><span>{latestAuthScan.remediationPlan?.findingGuidance?.[item.fingerprint]?.fixSummary || item.remediation}</span></div>
+                            <div className="miniStatusActions">
+                              <button onClick={()=>setAuthFindingStatus(item,'open')}>Open</button>
+                              <button onClick={()=>setAuthFindingStatus(item,'in_progress')}>In progress</button>
+                              <button onClick={()=>setAuthFindingStatus(item,'resolved')}>Resolved</button>
+                              <button onClick={()=>setAuthFindingStatus(item,'accepted')}>Accept</button>
+                              <button onClick={()=>setAuthFindingStatus(item,'false_positive')}>False positive</button>
+                            </div>
+                          </div>
                         </div>
                       )) : <div className="empty">No authorization weakness was validated with the supplied session.</div>}
                     </div>
+
+                    {(latestAuthScan.remediationPlan?.actions || []).length ? (
+                      <div className="authRemediation">
+                        <div className="sectionHead authSubhead"><div><h3>Fix authenticated risks</h3><p>Grounded remediation for the current post-login findings. A fresh test session is required for re-validation.</p></div></div>
+                        <div className="actionList">
+                          {latestAuthScan.remediationPlan.actions.slice(0,6).map((action)=>(
+                            <article className="actionCard" key={action.id}>
+                              <div className="actionHead">
+                                <div><Badge tone={action.priority === 'P0' ? 'critical' : action.priority === 'P1' ? 'high' : action.priority === 'P2' ? 'medium' : 'neutral'}>{action.priority}</Badge><h3>{action.title}</h3></div>
+                                <div className="actionOwner"><span>{action.owner}</span><small>{action.effort}</small></div>
+                              </div>
+                              <p>{action.why}</p>
+                              <div className="actionColumns">
+                                <div><strong>Implementation</strong><ol>{(action.steps || []).map((step,i)=><li key={i}>{step}</li>)}</ol></div>
+                                <div><strong>Verify</strong><ol>{(action.verification || []).map((step,i)=><li key={i}>{step}</li>)}</ol></div>
+                              </div>
+                            </article>
+                          ))}
+                        </div>
+                      </div>
+                    ) : null}
 
                     <div className="authColumns">
                       <div className="projectList">
