@@ -30,6 +30,7 @@ export default function Home() {
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [activeScanMode, setActiveScanMode] = useState('');
   const [retesting, setRetesting] = useState(false);
   const [notice, setNotice] = useState('');
   const [severityFilter, setSeverityFilter] = useState('All');
@@ -88,6 +89,11 @@ export default function Home() {
   const scan = useMemo(
     () => projectScans.find((item) => item.id === selectedScanId) || projectScans[0] || null,
     [projectScans, selectedScanId]
+  );
+
+  const findingGuidance = useMemo(
+    () => finding ? scan?.remediationPlan?.findingGuidance?.[finding.fingerprint] || null : null,
+    [scan, finding]
   );
 
   const findings = useMemo(() => {
@@ -170,27 +176,33 @@ export default function Home() {
     } catch (error) { setNotice(error.message); }
   }
 
-  async function runScan(assetId) {
+  async function runScan(assetId, mode='standard') {
     if (!project || !authorized) return;
     const asset = project.assets.find((item) => item.id === assetId) || project.assets[0];
     if (!asset) return;
     setScanning(true);
-    setNotice('Running deep crawl, browser QA, accessibility, security validation, TLS/DNS and API discovery… this can take 20–60 seconds.');
+    setActiveScanMode(mode);
+    setNotice(mode === 'deep'
+      ? 'Deep Scan is discovering public subdomains, live hosts, pages, APIs, technologies, CVEs and remediation actions. This can take several minutes.'
+      : 'Running Standard Scan: crawler, browser QA, accessibility, security validation, TLS/DNS and API discovery…');
     try {
       const response = await fetch('/api/scan', {
         method: 'POST',
         headers: { 'content-type':'application/json' },
-        body: JSON.stringify({ projectId:project.id, assetId:asset.id, authorized:true })
+        body: JSON.stringify({ projectId:project.id, assetId:asset.id, authorized:true, mode })
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Scan failed.');
       await refresh(project.id, result.id);
-      setTab('findings');
-      setNotice('Scan completed.');
+      setTab(mode === 'deep' ? 'remediation' : 'findings');
+      setNotice(mode === 'deep'
+        ? 'Deep Scan completed. Review Vulnerabilities, Discovery and Fix Center.'
+        : 'Standard Scan completed.');
     } catch (error) {
       setNotice(error.message);
     } finally {
       setScanning(false);
+      setActiveScanMode('');
     }
   }
 
@@ -243,6 +255,8 @@ export default function Home() {
             ['assets','Assets'],
             ['scans','Scans'],
             ['findings','Findings'],
+            ['vulnerabilities','Vulnerabilities'],
+            ['remediation','Fix Center'],
             ['quality','Browser QA'],
             ['surface','Discovery'],
             ['reports','Reports'],
@@ -279,9 +293,14 @@ export default function Home() {
           <div className="topActions">
             <Badge tone="success">Live beta</Badge>
             {project?.assets?.[0] ? (
-              <button className="primary" disabled={!authorized || scanning} onClick={()=>runScan(project.assets[0].id)}>
-                {scanning ? 'Scanning…' : 'Run scan'}
-              </button>
+              <>
+                <button className="secondary" disabled={!authorized || scanning} onClick={()=>runScan(project.assets[0].id,'standard')}>
+                  {scanning && activeScanMode === 'standard' ? 'Scanning…' : 'Run scan'}
+                </button>
+                <button className="primary deepButton" disabled={!authorized || scanning} onClick={()=>runScan(project.assets[0].id,'deep')}>
+                  {scanning && activeScanMode === 'deep' ? 'Deep scanning…' : 'Run Deep Scan'}
+                </button>
+              </>
             ) : null}
           </div>
         </header>
@@ -310,11 +329,11 @@ export default function Home() {
                   <div>
                     <span className="eyebrow">LATEST SCAN</span>
                     <h2>{scan.finalUrl}</h2>
-                    <p>{formatDate(scan.completedAt)} · {scan.trigger || 'manual'} · HTTP {scan.httpStatus}</p>
+                    <p>{formatDate(scan.completedAt)} · {scan.scanType || (scan.mode === 'deep' ? 'Deep Scan' : 'Standard Scan')} · {scan.status === 'completed_with_gaps' ? 'Completed with coverage gaps' : scan.status} · HTTP {scan.httpStatus}</p>
                     <div className="summaryText">{scan.executiveSummary}</div>
                   </div>
                   <div className="scoreRing">
-                    <strong>{scan.score}</strong><span>/100</span><small>Assurance</small>
+                    <strong>{scan.score}</strong><span>/100</span><small>Assurance · {scan.scoreConfidence || 'medium'} confidence</small>
                   </div>
                 </section>
 
@@ -395,7 +414,10 @@ export default function Home() {
                   {project.assets.map((asset)=>(
                     <div className="assetRow" key={asset.id}>
                       <div><Badge tone="success">{asset.type}</Badge><strong>{asset.label}</strong><span>{asset.url}</span></div>
-                      <button disabled={!authorized || scanning} onClick={()=>runScan(asset.id)}>Scan now</button>
+                      <div className="assetActions">
+                        <button disabled={!authorized || scanning} onClick={()=>runScan(asset.id,'standard')}>Standard</button>
+                        <button className="primary" disabled={!authorized || scanning} onClick={()=>runScan(asset.id,'deep')}>Deep Scan</button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -455,6 +477,81 @@ export default function Home() {
         ) : null}
 
 
+
+        {!loading && tab === 'vulnerabilities' ? (
+          <section className="panel">
+            <div className="sectionHead">
+              <div><span className="eyebrow">VERSION-AWARE CVE ENRICHMENT</span><h2>Vulnerabilities</h2><p>CVEs are shown only when Inspector has a versioned technology match that can be checked against NVD.</p></div>
+            </div>
+            {!scan ? <div className="empty">Run a scan first.</div> : scan.mode !== 'deep' ? (
+              <div className="empty">Run Deep Scan to perform version-aware CVE enrichment across discovered hosts.</div>
+            ) : (
+              <>
+                <div className="coverageGrid">
+                  <div><span>Products queried</span><b>{scan.metrics.cveProductsQueried || 0}</b></div>
+                  <div><span>CVEs matched</span><b>{scan.metrics.cvesMatched || 0}</b></div>
+                  <div><span>Hosts scanned</span><b>{scan.metrics.hostsScanned || 0}</b></div>
+                  <div><span>Domain pages</span><b>{scan.metrics.domainPagesCrawled || 0}</b></div>
+                </div>
+                <div className="vulnList">
+                  {(scan.evidence?.deep?.cves?.vulnerabilities || []).length ? (
+                    (scan.evidence.deep.cves.vulnerabilities || []).map((item)=>(
+                      <article className="vulnCard" key={item.id}>
+                        <div className="vulnTop">
+                          <div><strong>{item.id}</strong><span>{item.technology} {item.version}</span></div>
+                          <div className="cvss"><b>{item.cvss?.score ?? '—'}</b><span>CVSS</span></div>
+                        </div>
+                        <p>{item.description}</p>
+                        <div className="vulnMeta">
+                          <Badge tone={(item.cvss?.score || 0) >= 9 ? 'critical' : (item.cvss?.score || 0) >= 7 ? 'high' : (item.cvss?.score || 0) >= 4 ? 'medium' : 'low'}>{item.cvss?.severity || 'Unscored'}</Badge>
+                          <span>{(item.cwes || []).join(', ') || 'CWE not specified'}</span>
+                        </div>
+                        <p className="help">Recommended action: confirm the deployed version, review the vendor/NVD advisory, upgrade outside the affected range, then rerun Deep Scan.</p>
+                      </article>
+                    ))
+                  ) : <div className="empty">No CVEs were matched to the versioned technologies Inspector could confidently identify.</div>}
+                  {(scan.evidence?.deep?.cves?.errors || []).length ? (
+                    <div className="notice">CVE lookup was incomplete for {scan.evidence.deep.cves.errors.length} detected product(s). Inspector did not invent fallback CVEs.</div>
+                  ) : null}
+                </div>
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {!loading && tab === 'remediation' ? (
+          <section className="panel fixCenter">
+            <div className="sectionHead">
+              <div><span className="eyebrow">OPENAI REMEDIATION COPILOT</span><h2>Fix Center</h2><p>Prioritized actions grounded in the current scan evidence, with ownership and verification steps.</p></div>
+              {scan?.remediationPlan?.mode ? <Badge tone={scan.remediationPlan.mode === 'ai' ? 'success' : 'neutral'}>{scan.remediationPlan.mode === 'ai' ? 'OpenAI generated' : 'Rules fallback'}</Badge> : null}
+            </div>
+            {!scan ? <div className="empty">Run a scan first.</div> : (
+              <>
+                <div className="fixSummary">
+                  <strong>What to do next</strong>
+                  <p>{scan.remediationPlan?.executiveSummary || scan.executiveSummary}</p>
+                </div>
+                <div className="actionList">
+                  {(scan.remediationPlan?.actions || []).length ? scan.remediationPlan.actions.map((action)=>(
+                    <article className="actionCard" key={action.id}>
+                      <div className="actionHead">
+                        <div><Badge tone={action.priority === 'P0' ? 'critical' : action.priority === 'P1' ? 'high' : action.priority === 'P2' ? 'medium' : 'neutral'}>{action.priority}</Badge><h3>{action.title}</h3></div>
+                        <div className="actionOwner"><span>{action.owner}</span><small>{action.effort}</small></div>
+                      </div>
+                      <p>{action.why}</p>
+                      <div className="actionColumns">
+                        <div><strong>Implementation</strong><ol>{(action.steps || []).map((step,i)=><li key={i}>{step}</li>)}</ol></div>
+                        <div><strong>Verify the fix</strong><ol>{(action.verification || []).map((step,i)=><li key={i}>{step}</li>)}</ol></div>
+                      </div>
+                      <div className="actionLinks"><span>{(action.relatedFindings || []).length} linked finding(s)</span>{(action.relatedCves || []).length ? <span>{action.relatedCves.join(', ')}</span> : null}</div>
+                    </article>
+                  )) : <div className="empty">No prioritized remediation actions were generated for this scan.</div>}
+                </div>
+              </>
+            )}
+          </section>
+        ) : null}
+
         {!loading && tab === 'quality' ? (
           <section className="panel">
             <div className="sectionHead"><div><span className="eyebrow">REAL BROWSER ENGINE</span><h2>Browser QA</h2><p>Rendered Chromium signals, runtime errors, network failures and basic accessibility checks.</p></div></div>
@@ -486,10 +583,10 @@ export default function Home() {
             {!scan ? <div className="empty">Run a scan to populate discovery.</div> : (
               <>
                 <div className="coverageGrid">
-                  <div><span>Pages crawled</span><b>{scan.metrics.pagesCrawled || 0}</b></div>
-                  <div><span>API paths</span><b>{scan.metrics.apiEndpoints || 0}</b></div>
+                  <div><span>Pages crawled</span><b>{scan.mode === 'deep' ? (scan.metrics.domainPagesCrawled || scan.metrics.pagesCrawled || 0) : (scan.metrics.pagesCrawled || 0)}</b></div>
+                  <div><span>API paths</span><b>{scan.mode === 'deep' ? (scan.metrics.domainApiEndpoints || 0) : (scan.metrics.apiEndpoints || 0)}</b></div>
                   <div><span>Technologies</span><b>{scan.metrics.technologies || 0}</b></div>
-                  <div><span>Subdomains</span><b>{scan.metrics.subdomains || 0}</b></div>
+                  <div><span>Live hosts</span><b>{scan.mode === 'deep' ? (scan.metrics.liveHosts || 0) : (scan.metrics.subdomains || 0)}</b></div>
                 </div>
                 <div className="projectList">
                   <div className="sectionHead"><div><h3>Technology signals</h3></div></div>
@@ -497,18 +594,21 @@ export default function Home() {
                     <div className="projectRow" key={item.name}><div><strong>{item.name}</strong><span>{item.evidence} · {item.confidence} confidence</span></div></div>
                   ))}
                   <div className="sectionHead"><div><h3>API paths</h3></div></div>
-                  {(scan.evidence?.inventory?.apiEndpoints || []).map((item)=>(
-                    <div className="projectRow" key={(item.method || 'OBSERVE') + ' ' + item.path}>
-                      <div><strong>{item.method || 'OBSERVE'} {item.path}</strong><span>Observed via {item.source || 'application evidence'}</span></div>
+                  {((scan.mode === 'deep' ? scan.evidence?.deep?.endpoints : scan.evidence?.inventory?.apiEndpoints) || []).map((item)=>(
+                    <div className="projectRow" key={(item.hostname || '') + (item.method || 'OBSERVE') + ' ' + item.path}>
+                      <div><strong>{item.method || 'OBSERVE'} {item.hostname ? item.hostname : ''}{item.path}</strong><span>{item.classification || 'Unknown'} · observed via {item.source || 'application evidence'}</span></div>
                     </div>
                   ))}
                   <div className="sectionHead"><div><h3>Discovered subdomains</h3></div></div>
-                  {(scan.evidence?.inventory?.commonSubdomains || []).map((item)=>(
-                    <div className="projectRow" key={item.host}><div><strong>{item.host}</strong><span>{(item.ips || []).join(', ')}</span></div></div>
+                  {((scan.mode === 'deep' ? scan.evidence?.deep?.liveHosts : scan.evidence?.inventory?.commonSubdomains) || []).map((item)=>(
+                    <div className="projectRow" key={item.hostname || item.host}><div><strong>{item.hostname || item.host}</strong><span>{scan.mode === 'deep' ? ('HTTP ' + (item.status || 'ERR') + ' · ' + (item.contentType || 'unknown')) : (item.ips || []).join(', ')}</span></div></div>
                   ))}
                   <div className="sectionHead"><div><h3>Crawled pages</h3></div></div>
-                  {(scan.evidence?.inventory?.pages || []).map((item)=>(
-                    <div className="projectRow" key={item.url}><div><strong>{item.url}</strong><span>HTTP {item.status || 'ERR'} · {item.source}</span></div></div>
+                  {(scan.mode === 'deep'
+                    ? (scan.evidence?.deep?.hosts || []).flatMap((host)=>(host.pages || []).map((item)=>({...item,hostname:host.hostname})))
+                    : (scan.evidence?.inventory?.pages || [])
+                  ).slice(0,250).map((item)=>(
+                    <div className="projectRow" key={(item.hostname || '') + item.url}><div><strong>{item.url}</strong><span>HTTP {item.status || 'ERR'} · {item.hostname ? item.hostname + ' · ' : ''}{item.source}</span></div></div>
                   ))}
                 </div>
               </>
@@ -558,9 +658,20 @@ export default function Home() {
             <section><h4>Affected locations</h4>
               <p>{(finding.affectedLocations || [finding.location || scan?.finalUrl]).slice(0,12).join('\n')}</p>
             </section>
-            <section><h4>Recommended fix</h4><p>{finding.remediation}</p></section>
+            <section><h4>Recommended fix</h4><p>{findingGuidance?.fixSummary || finding.remediation}</p></section>
+            {findingGuidance ? (
+              <section className="aiGuidance">
+                <h4>OpenAI implementation plan</h4>
+                <div className="guidanceMeta"><span>{findingGuidance.owner}</span><span>{findingGuidance.effort}</span></div>
+                <strong>Steps</strong>
+                <ol>{(findingGuidance.steps || []).map((step,i)=><li key={i}>{step}</li>)}</ol>
+                <strong>Verify</strong>
+                <ol>{(findingGuidance.verification || []).map((step,i)=><li key={i}>{step}</li>)}</ol>
+              </section>
+            ) : null}
             <section><h4>Workflow</h4><div className="statusActions">
               <button onClick={()=>setFindingStatus('open')}>Open</button>
+              <button onClick={()=>setFindingStatus('in_progress')}>In progress</button>
               <button onClick={()=>setFindingStatus('resolved')}>Resolved</button>
               <button onClick={()=>setFindingStatus('accepted')}>Accept risk</button>
               <button onClick={()=>setFindingStatus('false_positive')}>False positive</button>
