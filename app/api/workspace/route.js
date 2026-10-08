@@ -131,7 +131,7 @@ export async function POST(request) {
     } else if (body.action === 'finding_status') {
       result = await updateFindingStatus(body.scanId, body.fingerprint, body.status);
     } else if (body.action === 'retest_finding') {
-      const { retestFinding } = await import('../../../lib/platform');
+      const { retestFinding } = await import('../../../lib/scanService');
       result = await retestFinding(body.scanId, body.fingerprint);
     } else {
       throw new Error('Unknown action.');
