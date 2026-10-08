@@ -258,3 +258,13 @@ td:first-child span{margin-top:4px;color:#7e8996;font-size:10px;line-height:1.45
   .pathStep{grid-template-columns:1fr}
   .codeFix{max-width:100%}
 }
+
+.authForm{margin-bottom:18px}
+.authMetrics{margin:16px 0}
+.authSubhead{margin-top:22px}
+.authColumns{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:18px}
+.authColumns .projectList{margin:0}
+.authPanel .projectRow strong{word-break:break-word}
+.authPanel .projectRow span{white-space:normal;line-height:1.45}
+.authPanel .help{max-width:900px}
+@media(max-width:900px){.authColumns{grid-template-columns:1fr}}
