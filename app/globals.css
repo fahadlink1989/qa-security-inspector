@@ -226,3 +226,29 @@ a{text-decoration:none;color:inherit}
   .reportActions>div{flex-wrap:wrap}
   .scanTypeGrid{grid-template-columns:1fr}
 }
+
+.engineChips{display:flex!important;gap:4px!important;flex-wrap:wrap;margin-top:4px}
+.engineChip{display:inline-flex!important;width:max-content;padding:2px 5px;border-radius:999px;background:#eef2f6;color:#5f6977;font-size:7px!important;text-transform:none!important}
+.engineChip.completed{background:#e7f8ec;color:#2c7b45}
+.engineChip.completed_with_gaps,.engineChip.failed{background:#fff1df;color:#9a611d}
+.scanJobRow{background:#fbfcff}
+.progressSpinner{width:18px;height:18px;border:2px solid #d8dff0;border-top-color:#5d73ff;border-radius:50%;animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+.jobProgress{display:grid;gap:5px}
+.jobProgress>div{height:8px;border-radius:999px;background:#e9eef8;overflow:hidden}
+.jobProgress>div i{display:block;height:100%;background:#5b75ff;border-radius:999px;transition:width .4s ease}
+.jobProgress small,.pendingText{font-size:8px;color:#748096}
+.networkLayout{display:grid;grid-template-columns:minmax(0,.8fr) minmax(0,1.2fr);gap:18px;margin-bottom:28px}
+.networkCallout{display:flex;justify-content:space-between;gap:18px;align-items:center;border:1px solid #f0d9a4;background:#fff8e8;border-radius:8px;padding:14px 16px;margin-bottom:18px}
+.networkCallout>div{display:grid;gap:4px}
+.networkCallout strong{font-size:11px}
+.networkCallout span{font-size:9px;color:#7f6b40;line-height:1.5}
+.networkGrid{grid-template-columns:minmax(260px,1.5fr) .8fr .65fr 1.1fr 90px}
+.engineMini{display:flex;gap:4px;flex-wrap:wrap}
+.engineRows.compact>div{grid-template-columns:1fr 1.8fr auto}
+.networkAuth{margin-top:18px}
+@media(max-width:1000px){
+  .networkLayout{grid-template-columns:1fr}
+  .networkGrid{grid-template-columns:1fr}
+  .networkGrid.tableHeader{display:none}
+}
