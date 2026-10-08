@@ -277,3 +277,60 @@ td:first-child span{margin-top:4px;color:#7e8996;font-size:10px;line-height:1.45
 .miniStatusActions button:hover{border-color:#576577;color:#fff}
 .authRemediation{margin-top:22px;padding-top:18px;border-top:1px solid #2a333e}
 @media(max-width:760px){.authFindingActions{max-width:100%;min-width:0}}
+
+/* Guided product journey */
+.scanCenter{overflow:visible}
+.journeyStrip{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin:16px 0 18px}
+.journeyStrip>div{display:grid;grid-template-columns:auto 1fr;gap:2px 9px;align-items:center;padding:11px 12px;border:1px solid #28313b;background:#10151b;border-radius:10px;opacity:.65}
+.journeyStrip>div.done,.journeyStrip>div.current{opacity:1}
+.journeyStrip>div.current{border-color:#5c6df2;background:#15192a}
+.journeyStrip span{grid-row:1/3;width:25px;height:25px;border-radius:50%;display:grid;place-items:center;background:#222a34;color:#9da9b8;font-size:10px;font-weight:700}
+.journeyStrip .done span{background:#17372b;color:#7fe1b1}
+.journeyStrip .current span{background:#3b45a5;color:#fff}
+.journeyStrip strong{font-size:10px}
+.journeyStrip small{font-size:9px;color:#73808f}
+.scanTargetBar{display:grid;grid-template-columns:minmax(0,1.3fr) minmax(300px,.7fr);gap:12px;margin:14px 0 18px;padding:14px;border:1px solid #2b3440;background:#0f141a;border-radius:12px}
+.scanTargetBar label{display:grid;gap:6px;font-size:10px;color:#9aa6b4}
+.scanTargetBar select{width:100%;border:1px solid #303a46;background:#151b22;color:#e9edf4;border-radius:8px;padding:10px}
+.scanAuthorization{display:flex!important;align-items:center;gap:10px;padding:8px 10px;border:1px solid #2d3844;border-radius:9px;background:#121820}
+.scanAuthorization input{width:16px;height:16px}
+.scanAuthorization span{display:grid;gap:2px}
+.scanAuthorization strong{font-size:10px;color:#d8dee8}
+.scanAuthorization small{font-size:9px;color:#7f8b99}
+.scanChoiceGrid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.scanChoice{display:flex;flex-direction:column;min-height:365px;border:1px solid #29333f;background:#11171e;border-radius:14px;padding:17px}
+.scanChoice.recommended{border-color:#3a5c50;box-shadow:inset 0 0 0 1px rgba(84,184,139,.08)}
+.scanChoiceTop{display:flex;justify-content:space-between;align-items:center;gap:8px}
+.scanChoiceTop>span:last-child{font-size:9px;color:#778493}
+.scanChoice h3{font-size:18px;margin:15px 0 5px}
+.scanQuestion{min-height:38px;margin:0 0 10px!important;color:#c4cbd5!important;font-size:11px!important;line-height:1.5!important}
+.scanChoice ul{margin:6px 0 14px;padding-left:18px;color:#8f9ba8;font-size:10px;line-height:1.7;flex:1}
+.scanOutcome{display:grid;gap:3px;border-top:1px solid #29313b;padding-top:11px;margin-bottom:13px}
+.scanOutcome strong{font-size:9px;text-transform:uppercase;letter-spacing:.08em;color:#73808f}
+.scanOutcome span{font-size:10px;color:#aab4c0;line-height:1.45}
+.scanChoice button{width:100%}
+.whatNext{display:grid;gap:5px;margin:16px 0 24px;padding:13px 14px;border:1px solid #31404e;background:#111923;border-radius:10px}
+.whatNext strong{font-size:10px}
+.whatNext span{font-size:10px;line-height:1.55;color:#8e9aa8}
+.scanHistoryBlock{border-top:1px solid #29323d;padding-top:18px}
+.resultNav{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 16px;padding:8px;border:1px solid #29333d;border-radius:10px;background:#0f141a}
+.resultNav button{display:flex;align-items:center;gap:7px;border:0;background:transparent;color:#8895a4;border-radius:7px;padding:8px 10px;font-size:10px;cursor:pointer}
+.resultNav button:hover{background:#171e26;color:#d4dbe5}
+.resultNav button.active{background:#242c37;color:#fff}
+.resultNav button span{min-width:18px;padding:2px 5px;border-radius:10px;background:#313b48;color:#aeb9c6;font-size:8px;text-align:center}
+.nextActionCard{display:flex;justify-content:space-between;gap:22px;align-items:center;margin:0 0 18px;padding:18px 20px;border:1px solid #39485a;background:linear-gradient(135deg,#121924,#151929);border-radius:14px}
+.nextActionCard h2{margin:4px 0 6px;font-size:18px}
+.nextActionCard p{max-width:760px;margin:0;color:#8f9baa;font-size:11px;line-height:1.55}
+.nextActionCard button{flex:none}
+.textLink{border:0;background:transparent!important;color:#8898ff!important;padding:7px 0!important;font-size:10px!important;cursor:pointer;text-align:left}
+.textLink:hover{color:#b8c0ff!important}
+@media(max-width:900px){
+  .scanChoiceGrid{grid-template-columns:1fr}
+  .scanTargetBar{grid-template-columns:1fr}
+  .journeyStrip{grid-template-columns:repeat(2,1fr)}
+  .scanChoice{min-height:0}
+}
+@media(max-width:650px){
+  .journeyStrip{grid-template-columns:1fr}
+  .nextActionCard{display:grid}
+}
