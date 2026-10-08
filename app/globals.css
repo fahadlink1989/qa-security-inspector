@@ -268,3 +268,12 @@ td:first-child span{margin-top:4px;color:#7e8996;font-size:10px;line-height:1.45
 .authPanel .projectRow span{white-space:normal;line-height:1.45}
 .authPanel .help{max-width:900px}
 @media(max-width:900px){.authColumns{grid-template-columns:1fr}}
+
+.authBadges{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.authFindingRow{align-items:flex-start}
+.authFindingActions{display:grid;gap:9px;max-width:48%;min-width:280px}
+.miniStatusActions{display:flex;gap:6px;flex-wrap:wrap}
+.miniStatusActions button{border:1px solid #303a46;background:#151b22;color:#aeb8c5;border-radius:7px;padding:6px 8px;font-size:9px;cursor:pointer}
+.miniStatusActions button:hover{border-color:#576577;color:#fff}
+.authRemediation{margin-top:22px;padding-top:18px;border-top:1px solid #2a333e}
+@media(max-width:760px){.authFindingActions{max-width:100%;min-width:0}}
