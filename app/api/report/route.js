@@ -1,5 +1,6 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { latestScanForProject, readState } from '../../../lib/store';
+import { scoreFindings } from '../../../lib/scanner';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -23,8 +24,8 @@ function csvCell(value){
   const text=String(value??'');
   return /[",\n]/.test(text)?'"'+text.replace(/"/g,'""')+'"':text;
 }
-function reportFindings(project,scan){
-  return [...(scan.findings||[])].sort((a,b)=>{
+function reportFindings(sourceFindings,project,scan){
+  return [...(sourceFindings||[])].sort((a,b)=>{
     const rank={Critical:5,High:4,Medium:3,Low:2,Informational:1};
     return (rank[b.severity]||0)-(rank[a.severity]||0);
   }).map((finding)=>({
@@ -32,12 +33,50 @@ function reportFindings(project,scan){
     title:finding.title,
     category:finding.category,
     engine:finding.engine,
-    target:finding.location||scan.finalUrl||scan.url,
+    target:finding.location||fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'',
     status:finding.workflowStatus||'open',
     summary:finding.summary,
     remediation:finding.remediation,
     checkId:finding.checkId
   }));
+}
+
+function currentWorkspaceFindings(state,project){
+  const items=[];
+  const latestByAsset=new Map();
+  for(const scan of (state.scans||[])
+    .filter((item)=>item.projectId===project.id)
+    .sort((a,b)=>String(b.completedAt||b.startedAt||'').localeCompare(String(a.completedAt||a.startedAt||'')))){
+    if(!latestByAsset.has(scan.assetId)) latestByAsset.set(scan.assetId,scan);
+  }
+  for(const scan of latestByAsset.values()) items.push(...(scan.findings||[]));
+
+  const auth=project.authScans?.[0];
+  if(auth) items.push(...(auth.findings||[]));
+  const code=project.codeScans?.[0];
+  if(code) items.push(...(code.findings||[]));
+
+  const latestNetworks=new Map();
+  for(const scan of project.networkScans||[]){
+    if(!latestNetworks.has(scan.networkTargetId)) latestNetworks.set(scan.networkTargetId,scan);
+  }
+  for(const scan of latestNetworks.values()) items.push(...(scan.findings||[]));
+
+  const map=new Map();
+  for(const finding of items){
+    const key=finding.fingerprint||finding.id||[finding.engine,finding.checkId,finding.title,finding.location].join('|');
+    if(!map.has(key)) map.set(key,finding);
+  }
+  return [...map.values()];
+}
+
+function summarize(findings){
+  const out={critical:0,high:0,medium:0,low:0,informational:0};
+  for(const finding of findings||[]){
+    const key=String(finding.severity||'Informational').toLowerCase();
+    if(key in out) out[key]+=1;
+  }
+  return out;
 }
 
 export async function GET(request){
@@ -52,9 +91,14 @@ export async function GET(request){
     const project=state.projects.find((item)=>item.id===projectId);
     if(!project) return new Response('Project not found',{status:404});
     const scan=latestScanForProject(state,projectId);
-    if(!scan) return new Response('No completed scan is available',{status:404});
+    const rawFindings=currentWorkspaceFindings(state,project);
+    if(!scan && !rawFindings.length) return new Response('No completed scan is available',{status:404});
 
-    const findings=reportFindings(project,scan);
+    const fallbackScan=scan||project.networkScans?.[0]||project.authScans?.[0]||project.codeScans?.[0]||{};
+    const findings=reportFindings(rawFindings,project,fallbackScan);
+    const summary=summarize(rawFindings);
+    const score=rawFindings.length?scoreFindings(rawFindings):(fallbackScan.score||0);
+    const executiveSummary='Inspector currently tracks '+rawFindings.length+' normalized risks across '+((project.assets?.length||0)+(project.networks?.length||0))+' registered targets. '+summary.critical+' Critical, '+summary.high+' High and '+summary.medium+' Medium findings are represented in this report.';
     const slug=project.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'workspace';
 
     if(format==='csv'){
@@ -74,13 +118,13 @@ export async function GET(request){
 
     if(format==='html'){
       const cards=[
-        ['Critical',scan.summary?.critical||0,'#d98af4'],
-        ['High',scan.summary?.high||0,'#ff6266'],
-        ['Medium',scan.summary?.medium||0,'#ffb365'],
-        ['Low',scan.summary?.low||0,'#fae64a']
+        ['Critical',summary.critical||0,'#d98af4'],
+        ['High',summary.high||0,'#ff6266'],
+        ['Medium',summary.medium||0,'#ffb365'],
+        ['Low',summary.low||0,'#fae64a']
       ].map(([label,count,color])=>'<div style="background:'+color+';padding:18px;border-radius:10px"><div style="font-size:13px">'+label+'</div><div style="font-size:34px;text-align:right">'+count+'</div></div>').join('');
       const rows=findings.slice(0,200).map((f)=>'<tr><td><strong>'+escapeHtml(f.severity)+'</strong></td><td><strong>'+escapeHtml(f.title)+'</strong><br><span>'+escapeHtml(f.summary)+'</span></td><td>'+escapeHtml(f.target)+'</td><td>'+escapeHtml(f.status)+'</td><td>'+escapeHtml(f.remediation)+'</td></tr>').join('');
-      const html='<!doctype html><html><head><meta charset="utf-8"><title>Inspector report</title><style>body{font-family:Arial,sans-serif;color:#172033;margin:0;background:#f3f5f8}.wrap{max-width:1100px;margin:32px auto;background:white;padding:36px;border-radius:12px}.top{display:flex;justify-content:space-between;gap:30px}.score{font-size:48px;font-weight:700}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #e4e8ee}th{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#6b7280}td span{font-size:11px;color:#687384;line-height:1.45}.meta{color:#718096;font-size:12px}.summary{line-height:1.6;color:#495565}@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}.top{display:block}}</style></head><body><div class="wrap"><div class="top"><div><div style="font-size:11px;letter-spacing:.15em;color:#6c7481">INSPECTOR SECURITY REPORT</div><h1>'+escapeHtml(project.name)+'</h1><div class="meta">'+escapeHtml(scan.finalUrl||scan.url)+' · '+escapeHtml(new Date(scan.completedAt||Date.now()).toLocaleString())+'</div></div><div><div class="score">'+escapeHtml(scan.score)+'</div><div class="meta">Assurance score / 100</div></div></div><h2>Executive summary</h2><p class="summary">'+escapeHtml(scan.executiveSummary||'')+'</p><div class="cards">'+cards+'</div><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Finding</th><th>Target</th><th>Status</th><th>Recommended fix</th></tr></thead><tbody>'+rows+'</tbody></table></div></body></html>';
+      const html='<!doctype html><html><head><meta charset="utf-8"><title>Inspector report</title><style>body{font-family:Arial,sans-serif;color:#172033;margin:0;background:#f3f5f8}.wrap{max-width:1100px;margin:32px auto;background:white;padding:36px;border-radius:12px}.top{display:flex;justify-content:space-between;gap:30px}.score{font-size:48px;font-weight:700}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #e4e8ee}th{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#6b7280}td span{font-size:11px;color:#687384;line-height:1.45}.meta{color:#718096;font-size:12px}.summary{line-height:1.6;color:#495565}@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}.top{display:block}}</style></head><body><div class="wrap"><div class="top"><div><div style="font-size:11px;letter-spacing:.15em;color:#6c7481">INSPECTOR SECURITY REPORT</div><h1>'+escapeHtml(project.name)+'</h1><div class="meta">'+escapeHtml(fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'')+' · '+escapeHtml(new Date(fallbackScan.completedAt||fallbackScan.scannedAt||Date.now()).toLocaleString())+'</div></div><div><div class="score">'+escapeHtml(score)+'</div><div class="meta">Assurance score / 100</div></div></div><h2>Executive summary</h2><p class="summary">'+escapeHtml(executiveSummary)+'</p><div class="cards">'+cards+'</div><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Finding</th><th>Target</th><th>Status</th><th>Recommended fix</th></tr></thead><tbody>'+rows+'</tbody></table></div></body></html>';
       return new Response(html,{
         headers:{
           'content-type':'text/html; charset=utf-8',
@@ -106,13 +150,13 @@ export async function GET(request){
 
     addLine('INSPECTOR — SECURITY REPORT',17,bold,24);
     addLine(project.name,15,bold,20);
-    addLine(scan.finalUrl||scan.url,9,regular,18);
+    addLine(fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'',9,regular,18);
     addLine('Generated: '+new Date().toISOString(),8,regular,22);
     addLine('Executive summary',12,bold,18);
-    for(const line of wrap(scan.executiveSummary||'')) addLine(line,9,regular,13);
+    for(const line of wrap(executiveSummary)) addLine(line,9,regular,13);
     y-=7;
-    addLine('Assurance score: '+scan.score+'/100',14,bold,20);
-    addLine('Critical '+(scan.summary?.critical||0)+'   High '+(scan.summary?.high||0)+'   Medium '+(scan.summary?.medium||0)+'   Low '+(scan.summary?.low||0),9,regular,22);
+    addLine('Assurance score: '+score+'/100',14,bold,20);
+    addLine('Critical '+(summary.critical||0)+'   High '+(summary.high||0)+'   Medium '+(summary.medium||0)+'   Low '+(summary.low||0),9,regular,22);
     addLine('Top findings',12,bold,18);
     findings.slice(0,30).forEach((finding,index)=>{
       addLine((index+1)+'. ['+finding.severity+'] '+finding.title,9,bold,14);
@@ -123,11 +167,11 @@ export async function GET(request){
     });
     y-=5;
     addLine('Coverage',12,bold,18);
-    addLine('Pages crawled: '+(scan.metrics?.pagesCrawled||scan.metrics?.domainPagesCrawled||0),8);
-    addLine('Browser renders: '+(scan.metrics?.browserPages||0),8);
-    addLine('API paths observed: '+(scan.metrics?.apiEndpoints||scan.metrics?.domainApiEndpoints||0),8);
-    addLine('DNS records observed: '+(scan.metrics?.dnsRecords||0),8);
-    addLine('TLS protocol: '+(scan.metrics?.tlsProtocol||'n/a'),8);
+    addLine('Pages crawled: '+(fallbackScan.metrics?.pagesCrawled||fallbackScan.metrics?.domainPagesCrawled||0),8);
+    addLine('Browser renders: '+(fallbackScan.metrics?.browserPages||0),8);
+    addLine('API paths observed: '+(fallbackScan.metrics?.apiEndpoints||fallbackScan.metrics?.domainApiEndpoints||0),8);
+    addLine('DNS records observed: '+(fallbackScan.metrics?.dnsRecords||0),8);
+    addLine('TLS protocol: '+(fallbackScan.metrics?.tlsProtocol||'n/a'),8);
 
     const bytes=await pdf.save();
     return new Response(bytes,{
