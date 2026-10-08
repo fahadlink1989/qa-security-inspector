@@ -47,6 +47,7 @@ export default function Home() {
   const [codeScanning, setCodeScanning] = useState(false);
   const [authForm, setAuthForm] = useState({ method:'bearer', credential:'', authorized:false });
   const [authScanning, setAuthScanning] = useState(false);
+  const [scanAssetId, setScanAssetId] = useState('');
 
   async function refresh(preferredProjectId, preferredScanId) {
     setLoading(true);
@@ -70,7 +71,10 @@ export default function Home() {
       setSelectedScanId(scanId);
 
       const project = next.projects.find((item) => item.id === projectId);
-      if (project) setSettings({ name: project.name, schedule: project.schedule, webhookUrl: '' });
+      if (project) {
+        setSettings({ name: project.name, schedule: project.schedule, webhookUrl: '' });
+        setScanAssetId((current) => project.assets?.some((asset)=>asset.id===current) ? current : (project.assets?.[0]?.id || ''));
+      }
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -159,8 +163,9 @@ export default function Home() {
       setSelectedScanId('');
       setSettings({ name: created.name, schedule: created.schedule, webhookUrl: '' });
       setAuthorized(false);
-      setTab('overview');
-      setNotice('Project created. Confirm authorization and click Run scan.');
+      setScanAssetId(created.assets?.[0]?.id || '');
+      setTab('scans');
+      setNotice('Project created. Choose the scan you want to run. Start with Baseline Scan, then use Deep Scan for full public attack-surface coverage.');
     } catch (error) { setNotice(error.message); }
   }
 
@@ -208,10 +213,10 @@ export default function Home() {
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Scan failed.');
       await refresh(project.id, result.id);
-      setTab(mode === 'deep' ? 'attackPaths' : 'findings');
+      setTab('findings');
       setNotice(mode === 'deep'
-        ? 'Deep Scan completed. Review Exposures, API Security, Attack Paths, Vulnerabilities and Fix Center.'
-        : 'Standard Scan completed.');
+        ? 'Deep Scan completed. Start in Results, then move to Fix Center for prioritized remediation.'
+        : 'Baseline Scan completed. Review Results. Run Deep Scan next when you want domain-wide discovery, exposures, CVEs and attack paths.');
     } catch (error) {
       setNotice(error.message);
     } finally {
@@ -222,11 +227,11 @@ export default function Home() {
 
   async function runAuthenticatedSecurity(event) {
     event.preventDefault();
-    if (!project || !project.assets?.[0] || !authForm.credential || !authForm.authorized) return;
+    if (!project || !project.assets?.length || !authForm.credential || !authForm.authorized) return;
     setAuthScanning(true);
     setNotice('Running authenticated comparison with an ephemeral test session. Credentials will not be persisted…');
     try {
-      const asset = project.assets[0];
+      const asset = project.assets.find((item)=>item.id===scanAssetId) || project.assets[0];
       const response = await fetch('/api/auth-scan', {
         method:'POST',
         headers:{'content-type':'application/json'},
@@ -328,7 +333,10 @@ export default function Home() {
     const nextScan = (data.scans || []).find((item) => item.projectId === id);
     setSelectedScanId(nextScan?.id || '');
     const nextProject = data.projects.find((item) => item.id === id);
-    if (nextProject) setSettings({ name:nextProject.name, schedule:nextProject.schedule, webhookUrl:'' });
+    if (nextProject) {
+      setSettings({ name:nextProject.name, schedule:nextProject.schedule, webhookUrl:'' });
+      setScanAssetId(nextProject.assets?.[0]?.id || '');
+    }
     setFinding(null);
   }
 
@@ -344,25 +352,22 @@ export default function Home() {
           {[
             ['overview','Overview'],
             ['assets','Assets'],
-            ['scans','Scans'],
-            ['findings','Findings'],
-            ['exposures','Exposures'],
-            ['apiSecurity','API Security'],
-            ['attackPaths','Attack Paths'],
-            ['authenticated','Authenticated'],
-            ['vulnerabilities','Vulnerabilities'],
-            ['codeSecurity','Code Security'],
+            ['scans','Scan Center'],
+            ['findings','Results'],
             ['remediation','Fix Center'],
-            ['quality','Browser QA'],
-            ['surface','Discovery'],
             ['reports','Reports'],
             ['settings','Settings']
-          ].map(([key,label]) => (
-            <button key={key} className={tab === key ? 'active' : ''} onClick={() => setTab(key)}>
-              <span>{label}</span>
-              {key === 'findings' && scan ? <em>{scan.findings.length}</em> : null}
-            </button>
-          ))}
+          ].map(([key,label]) => {
+            const resultViews=['findings','exposures','apiSecurity','attackPaths','vulnerabilities','quality','surface'];
+            const scanViews=['scans','authenticated','codeSecurity'];
+            const active = key==='findings' ? resultViews.includes(tab) : key==='scans' ? scanViews.includes(tab) : tab===key;
+            return (
+              <button key={key} className={active ? 'active' : ''} onClick={() => setTab(key)}>
+                <span>{label}</span>
+                {key === 'findings' && scan ? <em>{scan.findings.length}</em> : null}
+              </button>
+            );
+          })}
         </nav>
 
         <div className="projectPicker">
@@ -388,23 +393,9 @@ export default function Home() {
           </div>
           <div className="topActions">
             <Badge tone="success">Live beta</Badge>
-            {project?.assets?.[0] ? (
-              <>
-                <button className="secondary" disabled={!authorized || scanning} onClick={()=>runScan(project.assets[0].id,'standard')}>
-                  {scanning && activeScanMode === 'standard' ? 'Scanning…' : 'Run scan'}
-                </button>
-                <button className="primary deepButton" disabled={!authorized || scanning} onClick={()=>runScan(project.assets[0].id,'deep')}>
-                  {scanning && activeScanMode === 'deep' ? 'Deep scanning…' : 'Run Deep Scan'}
-                </button>
-              </>
-            ) : null}
+            {project?.assets?.length ? <button className="primary" onClick={()=>setTab('scans')}>Start a scan</button> : null}
           </div>
         </header>
-
-        <label className="authorization">
-          <input type="checkbox" checked={authorized} onChange={(e)=>setAuthorized(e.target.checked)} />
-          I confirm I own or have explicit permission to test the selected asset.
-        </label>
 
         {notice ? <div className="notice">{notice}</div> : null}
 
@@ -511,8 +502,7 @@ export default function Home() {
                     <div className="assetRow" key={asset.id}>
                       <div><Badge tone="success">{asset.type}</Badge><strong>{asset.label}</strong><span>{asset.url}</span></div>
                       <div className="assetActions">
-                        <button disabled={!authorized || scanning} onClick={()=>runScan(asset.id,'standard')}>Standard</button>
-                        <button className="primary" disabled={!authorized || scanning} onClick={()=>runScan(asset.id,'deep')}>Deep Scan</button>
+                        <button className="primary" onClick={()=>{setScanAssetId(asset.id);setTab('scans')}}>Scan this asset</button>
                       </div>
                     </div>
                   ))}
@@ -545,12 +535,23 @@ export default function Home() {
         {!loading && tab === 'findings' ? (
           <section className="panel findingsPanel">
             <div className="sectionHead">
-              <div><span className="eyebrow">NORMALIZED FINDINGS</span><h2>Findings</h2><p>{scan ? formatDate(scan.completedAt) : 'Run a scan first.'}</p></div>
+              <div><span className="eyebrow">SCAN RESULTS</span><h2>Results</h2><p>{scan ? (scan.scanType+' · '+formatDate(scan.completedAt)) : 'Run a scan first.'}</p></div>
               <select value={severityFilter} onChange={(e)=>setSeverityFilter(e.target.value)}>
                 <option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option>
                 <option>Security</option><option>Quality</option><option>new</option><option>open</option>
               </select>
             </div>
+            {scan ? (
+              <div className="resultNav">
+                <button className="active" onClick={()=>setTab('findings')}>All findings <span>{scan.findings?.length || 0}</span></button>
+                {scan.mode==='deep' ? <button onClick={()=>setTab('attackPaths')}>Attack paths <span>{scan.attackPaths?.length || 0}</span></button> : null}
+                {scan.mode==='deep' ? <button onClick={()=>setTab('exposures')}>Exposures <span>{(scan.findings || []).filter((item)=>item.category==='Exposure').length}</span></button> : null}
+                {scan.mode==='deep' ? <button onClick={()=>setTab('apiSecurity')}>API security <span>{(scan.findings || []).filter((item)=>item.category==='API Security').length}</span></button> : null}
+                {scan.mode==='deep' ? <button onClick={()=>setTab('vulnerabilities')}>CVEs <span>{scan.metrics?.cvesMatched || 0}</span></button> : null}
+                <button onClick={()=>setTab('quality')}>Browser QA</button>
+                <button onClick={()=>setTab('surface')}>Discovery</button>
+              </div>
+            ) : null}
             {!scan ? <div className="empty">No scan selected.</div> : (
               <div className="tableWrap">
                 <table>
