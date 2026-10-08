@@ -1,0 +1,9 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import crypto from 'node:crypto';
+const source=(await fs.readFile(new URL('../lib/jobs.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/export /g,'');
+function setup(fail=false){let state={projects:[{id:'p',assets:[{id:'a',url:'https://example.com'}]}],jobs:[]};const api=new Function('crypto','readState','mutateState','runProjectScan',source+'\nreturn {createScanJob,executeScanJob};')(crypto,async()=>structuredClone(state),async f=>{state=await f(structuredClone(state));return state;},async(p,a,t,m,onProgress)=>{await onProgress({progress:60,stage:'Evidence collected'});if(fail)throw new Error('Scanner failed');return {id:'s',status:'completed'};});return {api,state:()=>state};}
+test('web jobs persist lifecycle, progress, completion and scan link',async()=>{const s=setup();const j=await s.api.createScanJob({projectId:'p',assetId:'a'});assert.equal(j.status,'queued');await s.api.executeScanJob(j.id);const done=s.state().jobs[0];assert.equal(done.status,'completed');assert.equal(done.progress,100);assert.equal(done.scanId,'s');assert.ok(done.startedAt&&done.completedAt);});
+test('scanner error persists failed status',async()=>{const s=setup(true);const j=await s.api.createScanJob({projectId:'p',assetId:'a'});await assert.rejects(s.api.executeScanJob(j.id));assert.equal(s.state().jobs[0].status,'failed');});
+test('job records never persist session credentials or repository token',async()=>{const s=setup();await s.api.createScanJob({projectId:'p',assetId:'a',type:'authenticated',credential:'secret-session',token:'secret-token'});const stored=JSON.stringify(s.state().jobs);assert.ok(!stored.includes('secret-session')&&!stored.includes('secret-token'));});

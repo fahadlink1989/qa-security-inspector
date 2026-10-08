@@ -1,0 +1,11 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import * as pdf from 'pdf-lib';
+import {currentRiskRows,filterReportRows} from '../lib/riskModel.js';
+const source=(await fs.readFile(new URL('../app/api/report/route.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/export /g,'');
+const state={projects:[{id:'p',name:'Project ✓',assets:[{id:'a',url:'https://example.com'}]}],scans:[{id:'s',projectId:'p',assetId:'a',mode:'standard',status:'completed',url:'https://example.com',completedAt:'2026-10-08',findings:[{fingerprint:'f',title:'=Bad formula',severity:'High',evidence:'observed evidence ✓',summary:'Summary',remediation:'Fix it',owner:'Engineering'}]}]};
+const get=new Function('PDFDocument','StandardFonts','rgb','readState','latestScanForProject','scoreFindings','currentRiskRows','filterReportRows',source+'\nreturn GET;')(pdf.PDFDocument,pdf.StandardFonts,pdf.rgb,async()=>state,()=>state.scans[0],()=>50,currentRiskRows,filterReportRows);
+test('HTML report exports escaped evidence without undefined fallback reference',async()=>{const r=await get(new Request('http://localhost/api/report?projectId=p&format=html'));assert.equal(r.status,200);assert.match(await r.text(),/observed evidence/);});
+test('CSV neutralizes spreadsheet formulas and applies filters',async()=>{let r=await get(new Request('http://localhost/api/report?projectId=p&format=csv'));assert.match(await r.text(),/'=Bad formula/);r=await get(new Request('http://localhost/api/report?projectId=p&format=csv&severity=Low'));assert.equal((await r.text()).split('\n').length,1);});
+test('PDF accepts non-Latin source text and returns a real PDF',async()=>{const r=await get(new Request('http://localhost/api/report?projectId=p&format=pdf'));assert.equal(r.status,200);assert.equal(Buffer.from(await r.arrayBuffer()).subarray(0,4).toString(),'%PDF');});
