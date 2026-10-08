@@ -38,6 +38,7 @@ async function getWorkspaceView() {
     },
     projects,
     scans: state.scans,
+    jobs: state.jobs || [],
     updatedAt: state.updatedAt
   };
 }
