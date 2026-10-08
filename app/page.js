@@ -28,7 +28,7 @@ function scanLabel(scan){
 }
 
 export default function Home(){
-  const [data,setData]=useState({projects:[],scans:[],workspace:{}});
+  const [data,setData]=useState({projects:[],scans:[],jobs:[],workspace:{}});
   const [view,setView]=useState('dashboard');
   const [selectedProjectId,setSelectedProjectId]=useState('');
   const [loading,setLoading]=useState(true);
@@ -60,8 +60,8 @@ export default function Home(){
     networkTargetId:''
   });
 
-  async function load(preferredProjectId){
-    setLoading(true);
+  async function load(preferredProjectId,silent=false){
+    if(!silent) setLoading(true);
     try{
       const [response,engineResponse]=await Promise.all([
         fetch('/api/workspace',{cache:'no-store'}),
@@ -83,7 +83,7 @@ export default function Home(){
         }));
       }
     }catch(error){setNotice(error.message);}
-    finally{setLoading(false);}
+    finally{if(!silent) setLoading(false);}
   }
 
   useEffect(()=>{
@@ -93,9 +93,21 @@ export default function Home(){
     }catch{}
   },[]);
 
+  useEffect(()=>{
+    if(!activeJobs.length||!selectedProjectId) return;
+    const timer=setInterval(()=>load(selectedProjectId,true),2500);
+    return ()=>clearInterval(timer);
+  },[activeJobs.length,selectedProjectId]);
+
   const project=useMemo(()=>data.projects.find(p=>p.id===selectedProjectId)||null,[data.projects,selectedProjectId]);
   const scans=useMemo(()=>(data.scans||[]).filter(s=>s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId]);
   const latestScan=useMemo(()=>scans[0]||null,[scans]);
+
+  const activeJobs=useMemo(
+    ()=>(data.jobs||[]).filter(job=>job.projectId===selectedProjectId&&['queued','running'].includes(job.status))
+      .sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))),
+    [data.jobs,selectedProjectId]
+  );
 
   const scanRows=useMemo(()=>{
     const rows=[
@@ -274,9 +286,16 @@ export default function Home(){
       if(!response.ok) throw new Error(result.error||'Scan failed.');
       setNewScan(prev=>({...prev,credential:'',repositoryToken:'',authorized:false}));
       setNewScanOpen(false);
-      await load(project.id);
-      setView(['code','authenticated','network'].includes(newScan.type)?'risks':'scans');
-      setNotice('Scan completed. Review the risks and remediation guidance.');
+
+      if(['standard','deep'].includes(newScan.type)){
+        await load(project.id,true);
+        setView('scans');
+        setNotice((newScan.type==='deep'?'Attack Surface Scan':'Web App Scan')+' queued. You can leave this page; progress will update automatically.');
+      }else{
+        await load(project.id);
+        setView('risks');
+        setNotice('Scan completed. Review the risks and remediation guidance.');
+      }
     }catch(error){setNotice(error.message);}
     finally{setScanRunning(false);}
   }
@@ -376,7 +395,7 @@ export default function Home(){
             <header className="pageHeader">
               <div><h1>Dashboard</h1><p>Security posture across your current workspace.</p></div>
               <div className="headerActions">
-                <span className="miniStat">▦ {scanRunning?'1 scan in progress':'No scans in progress'}</span>
+                <span className="miniStat">▦ {activeJobs.length?activeJobs.length+' scan'+(activeJobs.length===1?'':'s')+' in progress':'No scans in progress'}</span>
                 <span className="miniStat">{project?.schedule&&project.schedule!=='manual'?'1 scheduled scan':'Manual scans'}</span>
                 <button className="primaryBtn" onClick={()=>openNewScan()}>＋ New Scan</button>
               </div>
@@ -477,6 +496,13 @@ export default function Home(){
             {scanTab==='history'?(
               <div className="dataCard">
                 <div className="tableHeader scanGrid"><span>Scan</span><span>Target(s)</span><span>Results</span><span>Created</span><span>Risks</span></div>
+                {activeJobs.map(job=><div className="tableRow scanGrid scanJobRow" key={job.id}>
+                  <div className="targetName"><span className="progressSpinner"/><div><strong>{job.scanType}</strong><small>{job.stage}</small></div></div>
+                  <span>{job.target}</span>
+                  <div className="jobProgress"><div><i style={{width:(job.progress||0)+'%'}}/></div><small>{job.progress||0}% · {job.status}</small></div>
+                  <span>{fmt(job.createdAt)}</span>
+                  <span className="pendingText">Scanning…</span>
+                </div>)}
                 {scanRows.map(scan=><div className="tableRow scanGrid" key={scan.id}>
                   <div className="targetName"><span className="expand">›</span><div><strong>{scanLabel(scan)}</strong><small>{scan.trigger||scan._kind||'manual'}</small>{scan.engineRuns?.length?<div className="engineChips">{scan.engineRuns.map(run=><span key={run.engine} className={'engineChip '+run.status}>{run.name||run.engine} · {run.status}</span>)}</div>:null}</div></div>
                   <span>{scan.finalUrl||scan.url||scan.target||scan.repository?.url||'Repository scan'}</span>
