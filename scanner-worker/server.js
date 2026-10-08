@@ -15,7 +15,7 @@ const ZAP_API_KEY=process.env.ZAP_API_KEY||'';
 const GREENBONE_ADAPTER_URL=process.env.GREENBONE_ADAPTER_URL||'';
 const GREENBONE_ADAPTER_TOKEN=process.env.GREENBONE_ADAPTER_TOKEN||'';
 
-const allowedEngines=new Set(['zap','nuclei','openvas','trivy','gitleaks']);
+const allowedEngines=new Set(['zap','nuclei','naabu','openvas','trivy','gitleaks']);
 const allowedProfiles=new Set(['safe','deep','code','network']);
 
 function json(res,status,body){
@@ -69,7 +69,7 @@ async function assertSafeTarget(engine,target){
     if(u.protocol!=='https:'||!['github.com','www.github.com'].includes(u.hostname.toLowerCase())) throw new Error('Repository scans only support HTTPS GitHub URLs.');
     return;
   }
-  if(engine==='openvas'&&String(target).includes('/')){
+  if((engine==='openvas'||engine==='naabu')&&String(target).includes('/')){
     if(!ALLOW_PRIVATE) throw new Error('Private network scanning is disabled on this worker.');
     if(!isPrivateCidr(target)) throw new Error('Internal network scans require an RFC1918 IPv4 CIDR between /16 and /32.');
     return;
@@ -264,6 +264,57 @@ async function runGitleaks(target){
   }finally{await fs.rm(dir,{recursive:true,force:true}).catch(()=>{});}
 }
 
+async function runNaabu(target){
+  const startedAt=new Date().toISOString();
+  const result=await runCommand('naabu',[
+    '-host',target,
+    '-json',
+    '-silent',
+    '-scan-type','c',
+    '-top-ports','100',
+    '-rate','100',
+    '-c','10',
+    '-retries','1',
+    '-timeout','1000',
+    '-disable-update-check'
+  ],{timeoutMs:180000});
+  const rows=result.stdout.split(/\r?\n/).filter(Boolean);
+  const findings=[];
+  const ports=[];
+  for(const line of rows){
+    try{
+      const item=JSON.parse(line);
+      const host=item.host||item.ip||target;
+      const port=Number(item.port);
+      if(!port) continue;
+      ports.push({host,ip:item.ip||null,port});
+      findings.push(makeFinding({
+        engine:'Naabu',
+        checkId:'NAABU-OPEN-PORT-'+port,
+        category:'Network Exposure',
+        severity:[21,23,25,110,143,3389,5900,6379,9200,27017].includes(port)?'Medium':'Informational',
+        title:'TCP port '+port+' is reachable',
+        summary:'Inspector confirmed that TCP port '+port+' accepted a connection on '+host+'. Reachability alone is not proof of a vulnerability.',
+        evidence:'Host: '+host+'\nPort: '+port+'\nScan type: TCP CONNECT\nProfile: top 100 ports, rate-limited',
+        location:String(host)+':'+port,
+        remediation:'Confirm the service is required to be reachable from this network. Restrict unnecessary ports with firewall/security-group controls and keep exposed services patched.',
+        confidence:'High',
+        evidenceQuality:'network-observation'
+      }));
+    }catch{}
+  }
+  return {
+    engine:'naabu',
+    name:'Naabu Port Discovery',
+    status:result.code===0||findings.length?'completed':'completed_with_gaps',
+    startedAt,
+    completedAt:new Date().toISOString(),
+    findings,
+    metrics:{openPorts:ports.length,ports},
+    stderr:result.code&& !findings.length?result.stderr.slice(0,1200):undefined
+  };
+}
+
 async function runOpenvas(target,metadata={}){
   if(!GREENBONE_ADAPTER_URL) throw new Error('GREENBONE_ADAPTER_URL is not configured on this worker.');
   const startedAt=new Date().toISOString();
@@ -299,6 +350,7 @@ async function execute(body){
   await assertSafeTarget(engine,target);
   if(engine==='zap') return runZap(target);
   if(engine==='nuclei') return runNuclei(target);
+  if(engine==='naabu') return runNaabu(target);
   if(engine==='trivy') return runTrivy(target);
   if(engine==='gitleaks') return runGitleaks(target);
   if(engine==='openvas') return runOpenvas(target,metadata);
@@ -313,6 +365,7 @@ const server=http.createServer(async(req,res)=>{
       engines:{
         zap:Boolean(ZAP_API_URL),
         nuclei:true,
+        naabu:true,
         trivy:true,
         gitleaks:true,
         openvas:Boolean(GREENBONE_ADAPTER_URL)
