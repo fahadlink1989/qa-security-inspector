@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { currentRiskRows } from '../lib/riskModel';
 
 const severityOrder={Critical:5,High:4,Medium:3,Low:2,Informational:1};
 
@@ -46,6 +47,14 @@ export default function Home(){
   const [settings,setSettings]=useState({name:'',schedule:'manual',scheduledMode:'standard',webhookUrl:''});
   const [engineStatus,setEngineStatus]=useState(null);
   const [targetUrl,setTargetUrl]=useState('');
+  const [selectedTarget,setSelectedTarget]=useState(null);
+  const [selectedScan,setSelectedScan]=useState(null);
+  const [targetLabel,setTargetLabel]=useState('');
+  const [reportFilters,setReportFilters]=useState({assetId:'',severity:'',status:'',sections:'all'});
+  const [scanSchedule,setScanSchedule]=useState('now');
+  const [selectedEngines,setSelectedEngines]=useState([]);
+  const [scanAssetIds,setScanAssetIds]=useState([]);
+  const reportQuery=new URLSearchParams({projectId:selectedProjectId,...reportFilters}).toString();
   const [networkForm,setNetworkForm]=useState({label:'',cidr:''});
   const [networkAuthorized,setNetworkAuthorized]=useState(false);
   const [networkScanningId,setNetworkScanningId]=useState('');
@@ -128,28 +137,8 @@ export default function Home(){
   },[scans]);
 
   const currentRisks=useMemo(()=>{
-    const rows=[];
-    for(const scan of latestByAsset.values()){
-      for(const finding of scan.findings||[]) rows.push({...finding,_scanId:scan.id,_scan:scan});
-    }
-    const auth=project?.authScans?.[0];
-    for(const finding of auth?.findings||[]) rows.push({...finding,_authScanId:auth.id,_auth:true,_scan:auth});
-    const code=project?.codeScans?.[0];
-    for(const finding of code?.findings||[]) rows.push({...finding,_code:true,_scan:code});
-    const latestNetworks=new Map();
-    for(const scan of project?.networkScans||[]){
-      if(!latestNetworks.has(scan.networkTargetId)) latestNetworks.set(scan.networkTargetId,scan);
-    }
-    for(const networkScan of latestNetworks.values()){
-      for(const finding of networkScan.findings||[]) rows.push({...finding,_network:true,_networkScanId:networkScan.id,_scan:networkScan});
-    }
-    const unique=new Map();
-    for(const row of rows){
-      const key=row.fingerprint||row.id;
-      if(!unique.has(key) || (severityOrder[row.severity]||0)>(severityOrder[unique.get(key)?.severity]||0)) unique.set(key,row);
-    }
-    return [...unique.values()].sort((a,b)=>(severityOrder[b.severity]||0)-(severityOrder[a.severity]||0));
-  },[latestByAsset,project]);
+    return project?currentRiskRows(data,project).sort((a,b)=>(severityOrder[b.severity]||0)-(severityOrder[a.severity]||0)):[];
+  },[data,project]);
 
   const filteredRisks=useMemo(()=>currentRisks.filter(r=>{
     if(riskSeverity!=='All' && r.severity!==riskSeverity) return false;
@@ -164,7 +153,7 @@ export default function Home(){
     const open=currentRisks.filter(r=>!['resolved','false_positive','accepted'].includes(r.workflowStatus||'open'));
     const accepted=currentRisks.filter(r=>(r.workflowStatus||'open')==='accepted').length;
     const closed=currentRisks.filter(r=>['resolved','false_positive'].includes(r.workflowStatus||'open')).length;
-    const latestScores=[...latestByAsset.values()].map(s=>Number(s.score||0)).filter(Boolean);
+    const latestScores=[...latestByAsset.values()].map(s=>s.score).filter(s=>typeof s==='number'&&Number.isFinite(s));
     const health=latestScores.length?Math.round(latestScores.reduce((a,b)=>a+b,0)/latestScores.length):null;
     return {
       total:currentRisks.length,
@@ -226,16 +215,16 @@ export default function Home(){
     setNetworkScanningId(networkTargetId);
     setNotice('Internal network scan started. Naabu will perform rate-limited TCP discovery and Greenbone/OpenVAS will run when configured on the internal worker.');
     try{
-      const response=await fetch('/api/network-scan',{
+      const response=await fetch('/api/scan',{
         method:'POST',
         headers:{'content-type':'application/json'},
-        body:JSON.stringify({projectId:project.id,networkTargetId,authorized:true})
+        body:JSON.stringify({type:'network',projectId:project.id,networkTargetId,authorized:true})
       });
       const result=await response.json();
       if(!response.ok) throw new Error(result.error||'Network scan failed.');
       await load(project.id);
       setView('risks');
-      setNotice('Internal network scan completed. Review normalized risks and engine coverage.');
+      setView('scans');setNotice('Internal network scan queued. Track progress in Scans.');
     }catch(error){setNotice(error.message);}
     finally{setNetworkScanningId('');}
   }
@@ -245,6 +234,7 @@ export default function Home(){
     if(!project) return;
     try{
       const patch={name:settings.name,schedule:settings.schedule,scheduledMode:settings.scheduledMode};
+      if(settings.schedule!=='manual'&&!project.scheduleAuthorized) throw new Error('Use New Scan to confirm authorization before enabling a recurring scan.');
       if(settings.webhookUrl) patch.webhookUrl=settings.webhookUrl;
       await workspaceAction({action:'update_project',projectId:project.id,patch});
       setSettings(prev=>({...prev,webhookUrl:''}));
@@ -254,32 +244,40 @@ export default function Home(){
   }
 
   async function runNewScan(){
-    if(!project) return;
+    if(!project) {setNotice('Create a workspace with a target first.');return;}
     const asset=project.assets.find(a=>a.id===newScan.assetId)||project.assets[0];
     if(!asset && !['code','network'].includes(newScan.type)) return;
     if(!newScan.authorized) return;
+    if(['standard','deep'].includes(newScan.type)&&!scanAssetIds.length){setNotice('Select at least one target.');return;}
+    if(scanSchedule!=='now'){
+      try{
+        if(!['standard','deep'].includes(newScan.type)) throw new Error('Recurring scans currently support web and attack surface profiles.');
+        await workspaceAction({action:'update_project',projectId:project.id,patch:{schedule:scanSchedule,scheduledMode:newScan.type,scheduledAssetIds:scanAssetIds.length?scanAssetIds:[asset.id],scheduledEngines:selectedEngines,scheduleAuthorized:true}});
+        await load(project.id);setNewScanOpen(false);setView('scans');setScanTab('scheduled');setNotice('Recurring scan saved for the selected target.');
+      }catch(error){setNotice(error.message);} return;
+    }
     setScanRunning(true);
     setNotice('Scan started. Inspector is collecting evidence and normalizing risks…');
     try{
       let response;
       if(newScan.type==='authenticated'){
         if(!newScan.credential) throw new Error('Enter an authorized test session first.');
-        response=await fetch('/api/auth-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,assetId:asset.id,authorized:true,authType:newScan.authMethod,credential:newScan.credential
+        response=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+          type:'authenticated',projectId:project.id,assetId:asset.id,authorized:true,authType:newScan.authMethod,credential:newScan.credential
         })});
       }else if(newScan.type==='code'){
         if(!newScan.repositoryUrl) throw new Error('Enter a GitHub repository URL.');
-        response=await fetch('/api/code-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,repositoryUrl:newScan.repositoryUrl,token:newScan.repositoryToken,authorized:true
+        response=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+          type:'code',projectId:project.id,repositoryUrl:newScan.repositoryUrl,token:newScan.repositoryToken,authorized:true
         })});
       }else if(newScan.type==='network'){
         if(!newScan.networkTargetId) throw new Error('Add an internal network first.');
-        response=await fetch('/api/network-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,networkTargetId:newScan.networkTargetId,authorized:true
+        response=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
+          type:'network',projectId:project.id,networkTargetId:newScan.networkTargetId,authorized:true
         })});
       }else{
         response=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,assetId:asset.id,authorized:true,mode:newScan.type==='deep'?'deep':'standard'
+          projectId:project.id,assetId:asset.id,assetIds:scanAssetIds.length?scanAssetIds:[asset.id],authorized:true,mode:newScan.type==='deep'?'deep':'standard',engines:selectedEngines
         })});
       }
       const result=await response.json();
@@ -287,7 +285,7 @@ export default function Home(){
       setNewScan(prev=>({...prev,credential:'',repositoryToken:'',authorized:false}));
       setNewScanOpen(false);
 
-      if(['standard','deep'].includes(newScan.type)){
+      if(result.status==='queued'||result.jobs?.length){
         await load(project.id,true);
         setView('scans');
         setNotice((newScan.type==='deep'?'Attack Surface Scan':'Web App Scan')+' queued. You can leave this page; progress will update automatically.');
@@ -302,27 +300,20 @@ export default function Home(){
 
   async function updateRiskStatus(risk,status){
     try{
-      if(risk._auth){
-        await workspaceAction({action:'auth_finding_status',projectId:project.id,authScanId:risk._authScanId,fingerprint:risk.fingerprint,status});
-      }else if(risk._network){
-        await workspaceAction({action:'network_finding_status',projectId:project.id,networkScanId:risk._networkScanId,fingerprint:risk.fingerprint,status});
-      }else if(risk._scanId){
-        await workspaceAction({action:'finding_status',scanId:risk._scanId,fingerprint:risk.fingerprint,status});
-      }else{
-        throw new Error('This finding does not support workflow updates yet.');
-      }
+      await workspaceAction({action:'risk_update',scanId:risk._scanId,fingerprint:risk.fingerprint||risk.id,patch:{status}});
       await load(project.id);
       setSelectedRisk(prev=>prev?{...prev,workflowStatus:status}:null);
     }catch(error){setNotice(error.message);}
   }
 
   async function retestRisk(){
-    if(!selectedRisk?._scanId) return;
+    if(!selectedRisk?._scanId || selectedRisk._kind!=='web') return;
     setRetesting(true);
     try{
       const result=await workspaceAction({action:'retest_finding',scanId:selectedRisk._scanId,fingerprint:selectedRisk.fingerprint});
       await load(project.id);
       setNotice(result.status==='resolved'?'Retest passed — this risk is no longer present.':'Retest completed — the risk is still present.');
+      if(result.status==='inconclusive') setNotice('Retest is inconclusive because scanner coverage was incomplete. The risk remains open.');
       if(result.currentFinding) setSelectedRisk({...result.currentFinding,_scanId:result.scan.id,_scan:result.scan});
       else setSelectedRisk(null);
     }catch(error){setNotice(error.message);}
@@ -331,7 +322,8 @@ export default function Home(){
 
   function openNewScan(assetId){
     setNewScan(prev=>({...prev,assetId:assetId||prev.assetId||project?.assets?.[0]?.id||'',networkTargetId:prev.networkTargetId||project?.networks?.[0]?.id||'',authorized:false}));
-    setNewScanOpen(true);
+    if(!project){setView('settings');setNotice('Create a workspace and add your first target.');return;}
+    setScanAssetIds([assetId||project.assets?.[0]?.id].filter(Boolean));setScanSchedule('now');setSelectedEngines([]);setNewScanOpen(true);
   }
 
   function finishOnboarding(){
@@ -351,7 +343,7 @@ export default function Home(){
           <select value={selectedProjectId} onChange={e=>selectProject(e.target.value)}>
             <option value="">Select workspace</option>
             {data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
+          </select><button className="secondaryBtn smallBtn" onClick={()=>{selectProject('');setView('settings');setTargetUrl('');setSettings({name:'',schedule:'manual',scheduledMode:'standard',webhookUrl:''})}}>New workspace</button>
         </div>
 
         <nav className="primaryNav">
@@ -361,7 +353,7 @@ export default function Home(){
             ['scans','◉','Scans'],
             ['risks','⚑','Risks'],
             ['reports','▤','Reports'],
-            ['networks','⌘','Internal Networks'],
+
             ['settings','⚙','Settings']
           ].map(([key,icon,label])=>(
             <button key={key} className={view===key?'active':''} onClick={()=>setView(key)}>
@@ -402,7 +394,7 @@ export default function Home(){
             </header>
 
             {!project?(
-              <div className="emptyState"><h2>Create or select a workspace</h2><p>Inspector organizes targets, scans, risks and reports by workspace.</p></div>
+              <div className="emptyState"><h2>Create or select a workspace</h2><p>Inspector organizes targets, scans, risks and reports by workspace.</p><button className="primaryBtn" onClick={()=>setView('settings')}>Create workspace</button></div>
             ):(
               <>
                 <div className="sectionTitle"><h2>Risks detected</h2><span>Total: {summary.total}</span></div>
@@ -434,7 +426,7 @@ export default function Home(){
                   <section className="cardBlock healthBlock">
                     <div className="blockHead"><h2>Health score</h2></div>
                     <div className="healthBody">
-                      <div className="healthGauge" style={{'--score':summary.health??0}}><strong>{summary.health??'—'}</strong><span>{summary.health?'out of 100':'Run a scan'}</span></div>
+                      <div className="healthGauge" style={{'--score':summary.health??0}}><strong>{summary.health??'—'}</strong><span>{summary.health!==null?'out of 100':'Run a scan'}</span></div>
                       <div className="healthLegend">
                         <div><i className="dot critical"/>Critical <b>{summary.critical}</b></div>
                         <div><i className="dot high"/>High <b>{summary.high}</b></div>
@@ -475,7 +467,7 @@ export default function Home(){
                 {(project.assets||[]).map(asset=>{
                   const last=latestByAsset.get(asset.id);
                   return <div className="tableRow targetGrid" key={asset.id}>
-                    <div className="targetName"><span className="expand">›</span><div><strong>{asset.label}</strong><small>{asset.url}</small></div></div>
+                    <button className="riskTitle" onClick={()=>{setSelectedTarget(asset);setTargetLabel(asset.label)}}><strong>{asset.label}</strong><small>{asset.url}</small></button>
                     <span>Web</span><span>{last?fmt(last.completedAt):'Never'}</span><span>{shortDate(asset.createdAt)}</span>
                     <button className="rowMenu" onClick={()=>openNewScan(asset.id)}>Scan</button>
                   </div>;
@@ -496,15 +488,15 @@ export default function Home(){
             {scanTab==='history'?(
               <div className="dataCard">
                 <div className="tableHeader scanGrid"><span>Scan</span><span>Target(s)</span><span>Results</span><span>Created</span><span>Risks</span></div>
-                {activeJobs.map(job=><div className="tableRow scanGrid scanJobRow" key={job.id}>
-                  <div className="targetName"><span className="progressSpinner"/><div><strong>{job.scanType}</strong><small>{job.stage}</small></div></div>
+                {(data.jobs||[]).filter(j=>j.projectId===selectedProjectId&&['queued','running','failed'].includes(j.status)).map(job=><div className="tableRow scanGrid scanJobRow" key={job.id}>
+                  <div className="targetName"><span className="progressSpinner"/><div><strong>{job.scanType}</strong><small>{job.error||job.stage}</small></div></div>
                   <span>{job.target}</span>
                   <div className="jobProgress"><div><i style={{width:(job.progress||0)+'%'}}/></div><small>{job.progress||0}% · {job.status}</small></div>
                   <span>{fmt(job.createdAt)}</span>
-                  <span className="pendingText">Scanning…</span>
+                  <span className="pendingText">{job.status==='failed'?'Failed':'Scanning…'}</span>
                 </div>)}
                 {scanRows.map(scan=><div className="tableRow scanGrid" key={scan.id}>
-                  <div className="targetName"><span className="expand">›</span><div><strong>{scanLabel(scan)}</strong><small>{scan.trigger||scan._kind||'manual'}</small>{scan.engineRuns?.length?<div className="engineChips">{scan.engineRuns.map(run=><span key={run.engine} className={'engineChip '+run.status}>{run.name||run.engine} · {run.status}</span>)}</div>:null}</div></div>
+                  <div className="targetName"><span className="expand">›</span><div><button className="textBtn" onClick={()=>setSelectedScan(scan)}>{scanLabel(scan)} · Details</button><small>{scan.trigger||scan._kind||'manual'}</small>{scan.engineRuns?.length?<div className="engineChips">{scan.engineRuns.map(run=><span key={run.engine} className={'engineChip '+run.status}>{run.name||run.engine} · {run.status}</span>)}</div>:null}</div></div>
                   <span>{scan.finalUrl||scan.url||scan.target||scan.repository?.url||'Repository scan'}</span>
                   <div><Badge tone={statusTone(scan.status)}>{scan.status==='completed_with_gaps'?'Completed with gaps':scan.status}</Badge><small className="inlineMeta">Score {scan.score??'—'}</small></div>
                   <span>{fmt(scan.completedAt||scan.startedAt)}</span>
@@ -540,7 +532,7 @@ export default function Home(){
                 <span>{r._scan?.finalUrl||r.location||project?.assets?.[0]?.url}</span>
                 <span><small>First: {fmt(r.firstSeen||r._scan?.completedAt||r._scan?.scannedAt)}</small><small>Last: {fmt(r.lastSeen||r._scan?.completedAt||r._scan?.scannedAt)}</small></span>
                 <Badge tone={(r.workflowStatus||'open')==='accepted'?'success':(r.workflowStatus||'open')==='resolved'?'neutral':'warning'}>{(r.workflowStatus||'open').replaceAll('_',' ')}</Badge>
-                {!r._code?<button className="secondaryBtn smallBtn" onClick={()=>updateRiskStatus(r,'accepted')}>Accept Risk</button>:<span/>}
+                {true?<button className="secondaryBtn smallBtn" onClick={()=>updateRiskStatus(r,'accepted')}>Accept Risk</button>:<span/>}
               </div>)}
               {!filteredRisks.length?<div className="emptyRow">No risks match these filters.</div>:null}
             </div>
@@ -550,20 +542,22 @@ export default function Home(){
         {view==='reports'?(
           <section className="page">
             <header className="pageHeader"><div><h1>Reports</h1><p>Create stakeholder-ready reports from the latest workspace findings.</p></div></header>
-            <div className="tabs"><button className="active">Reports</button><button>Scheduled Reports</button></div>
-            {!project||!latestScan?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p></div>:(
+            <p className="muted">Scheduled report delivery is planned. Create a report below.</p>
+            {!project||!scanRows.length?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p></div>:(
               <div className="reportBuilder">
                 <h2>Create a Report</h2>
-                <label>Report scope<span>Latest completed scan for {project.name}</span></label>
+                <label>Target<select value={reportFilters.assetId} onChange={e=>setReportFilters({...reportFilters,assetId:e.target.value})}><option value="">All targets</option>{project.assets.map(a=><option key={a.id} value={a.id}>{a.label}</option>)}</select></label>
+                <label>Severity<select value={reportFilters.severity} onChange={e=>setReportFilters({...reportFilters,severity:e.target.value})}><option value="">All severities</option>{['Critical','High','Medium','Low','Informational'].map(v=><option key={v}>{v}</option>)}</select></label>
+                <label>Status<select value={reportFilters.status} onChange={e=>setReportFilters({...reportFilters,status:e.target.value})}><option value="">All statuses</option>{['open','in_progress','resolved','accepted','false_positive'].map(v=><option key={v}>{v}</option>)}</select></label>
                 <label>Sections
-                  <select defaultValue="all"><option value="all">Executive summary + all findings</option><option value="security">Security findings only</option><option value="technical">Technical evidence</option></select>
+                  <select value={reportFilters.sections} onChange={e=>setReportFilters({...reportFilters,sections:e.target.value})}><option value="all">Executive summary + all findings</option><option value="security">Security findings only</option><option value="technical">Technical evidence</option></select>
                 </label>
                 <div className="reportActions">
-                  <a className="previewBtn" target="_blank" rel="noreferrer" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=html&preview=1'}>Preview Report ({project.assets?.length||0} targets, {summary.total} risks)</a>
+                  <a className="previewBtn" target="_blank" rel="noreferrer" href={'/api/report?'+reportQuery+'&format=html&preview=1'}>Preview filtered report</a>
                   <div>
-                    <a className="secondaryBtn linkBtn" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=pdf'}>Download PDF ⇩</a>
-                    <a className="secondaryBtn linkBtn" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=csv'}>Download CSV ⇩</a>
-                    <a className="secondaryBtn linkBtn" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=html'}>Download HTML ⇩</a>
+                    <a className="secondaryBtn linkBtn" href={'/api/report?'+reportQuery+'&format=pdf'}>Download PDF ⇩</a>
+                    <a className="secondaryBtn linkBtn" href={'/api/report?'+reportQuery+'&format=csv'}>Download CSV ⇩</a>
+                    <a className="secondaryBtn linkBtn" href={'/api/report?'+reportQuery+'&format=html'}>Download HTML ⇩</a>
                   </div>
                 </div>
               </div>
@@ -633,7 +627,7 @@ export default function Home(){
         {view==='settings'?(
           <section className="page">
             <header className="pageHeader"><div><h1>Settings</h1><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
-            {!project?<div className="emptyState">Select a workspace first.</div>:(
+            {!project?<form className="settingsCard" onSubmit={async e=>{e.preventDefault();try{const p=await workspaceAction({action:'create_project',name:settings.name,url:targetUrl});await load(p.id);setView('targets');setNotice('Workspace created. Start your first scan.');}catch(err){setNotice(err.message)}}}><h2>Create workspace</h2><label>Name<input required value={settings.name} onChange={e=>setSettings({...settings,name:e.target.value})}/></label><label>First target URL<input required type="url" value={targetUrl} onChange={e=>setTargetUrl(e.target.value)}/></label><button className="primaryBtn">Create workspace</button></form>:(
               <div className="settingsGrid">
                 <form className="settingsCard" onSubmit={saveSettings}>
                   <h2>Workspace</h2>
@@ -645,16 +639,9 @@ export default function Home(){
                 </form>
 
                 <section className="settingsCard">
-                  <h2>Scanner stack</h2>
+                  <h2>Scanner stack</h2><button className="secondaryBtn" onClick={()=>setView('networks')}>Manage internal network targets</button>
                   <p className="muted">Inspector normalizes results behind one risk model. Heavy open-source scanners should run in isolated container workers, not in the web application.</p>
-                  <div className="engineRows">
-                    <div><strong>Playwright + axe-core</strong><span>Rendered browser QA and accessibility</span><Badge tone="success">Connected</Badge></div>
-                    <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Naabu</strong><span>Rate-limited TCP port discovery</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                  </div>
+                  <div className="engineRows">{[...(engineStatus?.builtIn||[]),...(engineStatus?.worker?.engines||[])].map(engine=><div key={engine.id}><strong>{engine.name}</strong><span>{engine.purpose||engine.profile}</span><Badge tone={engine.status==='available'?'success':'neutral'}>{engine.status||'unavailable'}</Badge></div>)}</div>
                   <p className="muted small">Commercial licensing should be reviewed before redistributing third-party binaries. Nmap is intentionally not an embedded default.</p>
                 </section>
               </div>
@@ -678,7 +665,7 @@ export default function Home(){
               ].map(([key,title,kicker,desc])=><button key={key} className={newScan.type===key?'selected':''} onClick={()=>setNewScan({...newScan,type:key})}><span>{kicker}</span><strong>{title}</strong><small>{desc}</small></button>)}
             </div>
 
-            {!['code','network'].includes(newScan.type)?<label className="field">Target<select value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {newScan.type==='authenticated'?<label className="field">Target<select value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
             {newScan.type==='network'?<label className="field">Internal network<select value={newScan.networkTargetId} onChange={e=>setNewScan({...newScan,networkTargetId:e.target.value})}><option value="">Select network</option>{(project?.networks||[]).map(n=><option key={n.id} value={n.id}>{n.label} · {n.cidr}</option>)}</select><small>Internal scans require the scanner worker to run where it can reach this private CIDR.</small></label>:null}
 
             {newScan.type==='authenticated'?<>
@@ -691,9 +678,10 @@ export default function Home(){
               <label className="field">Private repository token (optional)<input type="password" autoComplete="off" value={newScan.repositoryToken} onChange={e=>setNewScan({...newScan,repositoryToken:e.target.value})} placeholder="Used only for this request"/><small>Token values are never stored in scan history.</small></label>
             </>:null}
 
+            {['standard','deep'].includes(newScan.type)?<><div className="settingsCard"><strong>Targets to scan</strong>{(project?.assets||[]).map(a=><label key={a.id}><input type="checkbox" checked={scanAssetIds.includes(a.id)} onChange={e=>setScanAssetIds(e.target.checked?[...scanAssetIds,a.id]:scanAssetIds.filter(id=>id!==a.id))}/>{a.label} · {a.url}</label>)}</div><label className="field">Run<select value={scanSchedule} onChange={e=>setScanSchedule(e.target.value)}><option value="now">Run now</option><option value="daily">Daily (02:00 UTC)</option><option value="weekly">Weekly (checked at 02:00 UTC)</option></select></label><div className="settingsCard"><strong>Scanner engines</strong><p>Inspector core checks are included. Choose available worker engines.</p>{(engineStatus?.worker?.engines||[]).filter(e=>['zap','nuclei'].includes(e.id)).map(engine=><label key={engine.id}><input type="checkbox" disabled={engine.status!=='available'} checked={selectedEngines.includes(engine.id)} onChange={e=>setSelectedEngines(e.target.checked?[...selectedEngines,engine.id]:selectedEngines.filter(id=>id!==engine.id))}/>{engine.name} · {engine.status}</label>)}</div></>:null}
             <label className="authConfirm"><input type="checkbox" checked={newScan.authorized} onChange={e=>setNewScan({...newScan,authorized:e.target.checked})}/><span><strong>Authorization confirmed</strong><small>I own this target/repository or have explicit permission to test it.</small></span></label>
 
-            <div className="modalFoot"><button className="secondaryBtn" disabled={scanRunning} onClick={()=>setNewScanOpen(false)}>Cancel</button><button className="primaryBtn" disabled={!newScan.authorized||scanRunning} onClick={runNewScan}>{scanRunning?'Scanning…':'Start Scan'}</button></div>
+            <div className="modalFoot"><button className="secondaryBtn" disabled={scanRunning} onClick={()=>setNewScanOpen(false)}>Cancel</button><button className="primaryBtn" disabled={!newScan.authorized||scanRunning} onClick={runNewScan}>{scanRunning?'Scanning…':scanSchedule==='now'?'Start Scan':'Save schedule'}</button></div>
           </section>
         </div>
       ):null}
@@ -707,6 +695,9 @@ export default function Home(){
         </div>
       ):null}
 
+      {selectedTarget?<div className="modalBackdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setSelectedTarget(null)}}><aside className="riskDrawer"><div className="drawerTop"><h2>Target details</h2><button onClick={()=>setSelectedTarget(null)}>×</button></div><p>{selectedTarget.url}</p><label className="field">Label<input value={targetLabel} onChange={e=>setTargetLabel(e.target.value)}/></label><div className="workflowButtons"><button onClick={async()=>{try{await workspaceAction({action:'update_asset',projectId:project.id,assetId:selectedTarget.id,patch:{label:targetLabel}});await load(project.id);setSelectedTarget({...selectedTarget,label:targetLabel});setNotice('Target updated.');}catch(e){setNotice(e.message)}}}>Save label</button><button onClick={()=>{openNewScan(selectedTarget.id);setSelectedTarget(null)}}>Start scan</button><button onClick={async()=>{try{await workspaceAction({action:'remove_asset',projectId:project.id,assetId:selectedTarget.id});setSelectedTarget(null);await load(project.id);setNotice('Target removed from future scans. Historical scan evidence is retained.');}catch(e){setNotice(e.message)}}}>Remove from scanning</button></div><section><h3>Scan history</h3>{scanRows.filter(scan=>scan.assetId===selectedTarget.id).map(scan=><button className="recentScan" key={scan.id} onClick={()=>{setSelectedScan(scan);setSelectedTarget(null)}}>{scanLabel(scan)} · {fmt(scan.completedAt||scan.startedAt)} · {scan.status}</button>)}</section><section><h3>Observed asset relationships</h3><p>Discovery does not authorize scanning these assets.</p>{scans.find(scan=>scan.assetId===selectedTarget.id&&scan.evidence?.deep)?.evidence?.deep?.liveHosts?.map(host=><p key={host.url}>{host.hostname} · {host.url} · HTTP {host.status}</p>)||<p>No discovery evidence yet. Run an Attack Surface Scan.</p>}</section></aside></div>:null}
+      {selectedScan?<div className="modalBackdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setSelectedScan(null)}}><aside className="riskDrawer"><div className="drawerTop"><h2>{scanLabel(selectedScan)}</h2><button onClick={()=>setSelectedScan(null)}>×</button></div><p>{selectedScan.url||selectedScan.target||selectedScan.repository?.url}</p><p>Status: {selectedScan.status}</p><p>Started: {fmt(selectedScan.startedAt)}<br/>Completed: {fmt(selectedScan.completedAt||selectedScan.scannedAt)}</p><section><h3>Engine execution</h3>{(selectedScan.engineRuns||[]).map(run=><p key={run.engine}>{run.name||run.engine} · {run.status} · {run.findingCount||0} findings<br/>{run.error}</p>)}</section><section><h3>Coverage gaps</h3><pre>{JSON.stringify(selectedScan.coverageGaps||[],null,2)}</pre></section><section><h3>Findings</h3>{(selectedScan.findings||[]).map(f=><button className="recentScan" key={f.fingerprint||f.id} onClick={()=>{setSelectedRisk({...f,_scan:selectedScan,_scanId:selectedScan.id,_kind:selectedScan._kind||'web'});setSelectedScan(null)}}>{f.severity} · {f.title}</button>)}</section><a className="primaryBtn linkBtn" target="_blank" rel="noreferrer" href={'/api/report?projectId='+project.id+'&scanId='+selectedScan.id+'&format=html&preview=1'}>Preview scan report</a></aside></div>:null}
+
       {selectedRisk?(
         <div className="modalBackdrop riskBackdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setSelectedRisk(null)}}>
           <aside className="riskDrawer">
@@ -717,9 +708,12 @@ export default function Home(){
             <section><h3>Evidence</h3><pre>{selectedRisk.evidence||selectedRisk.location||'Evidence is available in the scan record.'}</pre></section>
             <section><h3>Recommended fix</h3><p>{selectedRisk.remediation||'Review the upstream advisory or application control and remove the underlying exposure.'}</p></section>
             {selectedRisk._scan?.remediationPlan?.findingGuidance?.[selectedRisk.fingerprint]?<section><h3>Implementation guidance</h3><ol>{(selectedRisk._scan.remediationPlan.findingGuidance[selectedRisk.fingerprint].steps||[]).map((s,i)=><li key={i}>{s}</li>)}</ol></section>:null}
+            <section><h3>Identifiers and detection</h3><p>CVE: {String(selectedRisk.cve||selectedRisk.cves||'Not supplied')} · CVSS: {String(selectedRisk.cvss||'Not supplied')} · CWE: {String(selectedRisk.cwe||'Not supplied')}</p><p>First seen: {fmt(selectedRisk.firstSeen||selectedRisk._scan?.completedAt)}<br/>Last seen: {fmt(selectedRisk.lastSeen||selectedRisk._scan?.completedAt)}</p></section>
+            <section><h3>Ownership and verification</h3><label className="field">Owner<input value={selectedRisk.owner||''} placeholder={selectedRisk._scan?.remediationPlan?.findingGuidance?.[selectedRisk.fingerprint]?.owner||'Assign engineering or security owner'} onChange={e=>setSelectedRisk({...selectedRisk,owner:e.target.value})}/></label><button onClick={async()=>{try{await workspaceAction({action:'risk_update',scanId:selectedRisk._scanId,fingerprint:selectedRisk.fingerprint||selectedRisk.id,patch:{owner:selectedRisk.owner||''}});await load(project.id);setNotice('Risk owner saved.');}catch(e){setNotice(e.message)}}}>Save owner</button><ul>{(selectedRisk._scan?.remediationPlan?.findingGuidance?.[selectedRisk.fingerprint]?.verification||['Repeat the same scanner check after the fix. Incomplete coverage cannot verify resolution.']).map((step,i)=><li key={i}>{step}</li>)}</ul></section>
+            <section><h3>Action history</h3>{(selectedRisk.actionHistory||[]).map((action,i)=><p key={i}>{fmt(action.at)} · {action.status} · {action.owner||'Unassigned'}</p>)}</section>
             <section><h3>Workflow</h3><div className="workflowButtons">
-              {!selectedRisk._code?<><button onClick={()=>updateRiskStatus(selectedRisk,'open')}>Open</button><button onClick={()=>updateRiskStatus(selectedRisk,'in_progress')}>In progress</button><button onClick={()=>updateRiskStatus(selectedRisk,'resolved')}>Resolved</button><button onClick={()=>updateRiskStatus(selectedRisk,'accepted')}>Accept risk</button><button onClick={()=>updateRiskStatus(selectedRisk,'false_positive')}>False positive</button></>:null}
-              {selectedRisk._scanId?<button className="primaryBtn" disabled={retesting} onClick={retestRisk}>{retesting?'Retesting…':'Retest finding'}</button>:null}
+              {true?<><button onClick={()=>updateRiskStatus(selectedRisk,'open')}>Open</button><button onClick={()=>updateRiskStatus(selectedRisk,'in_progress')}>In progress</button><button onClick={()=>updateRiskStatus(selectedRisk,'resolved')}>Resolved</button><button onClick={()=>updateRiskStatus(selectedRisk,'accepted')}>Accept risk</button><button onClick={()=>updateRiskStatus(selectedRisk,'false_positive')}>False positive</button></>:null}
+              {selectedRisk._scanId&&selectedRisk._kind==='web'?<button className="primaryBtn" disabled={retesting} onClick={retestRisk}>{retesting?'Retesting…':'Retest finding'}</button>:null}
             </div></section>
           </aside>
         </div>
@@ -737,7 +731,7 @@ export default function Home(){
                 ['monitor','Set up continuous monitoring','Track regressions and generate reports over time.']
               ].map(([key,title,desc])=><button key={key} className={onboardingChoice===key?'selected':''} onClick={()=>setOnboardingChoice(key)}><span className="choiceIcon">{key==='surface'?'◎':key==='web'?'</>':key==='code'?'⌘':'◷'}</span><div><strong>{title}</strong><span>{desc}</span></div><i>{onboardingChoice===key?'●':'○'}</i></button>)}
             </div>
-            <div className="modalFoot"><button className="textBtn" onClick={finishOnboarding}>Skip</button><button className="primaryBtn" onClick={()=>{finishOnboarding(); if(onboardingChoice)setView(onboardingChoice==='surface'||onboardingChoice==='web'?'scans':onboardingChoice==='code'?'settings':'settings')}}>Continue</button></div>
+            <div className="modalFoot"><button className="textBtn" onClick={finishOnboarding}>Skip</button><button className="primaryBtn" onClick={()=>{finishOnboarding(); if(project){setNewScan(prev=>({...prev,type:onboardingChoice==='code'?'code':onboardingChoice==='surface'?'deep':'standard'}));openNewScan();if(onboardingChoice==='monitor')setScanSchedule('daily');}else setView('settings')}}>Continue</button></div>
           </section>
         </div>
       ):null}

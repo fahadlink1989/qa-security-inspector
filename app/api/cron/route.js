@@ -13,11 +13,11 @@ export async function GET(request) {
   }
 
   const state = await readState();
-  const due = state.projects.filter((project) => dueForSchedule(project, latestScanForProject(state, project.id)));
+  const due = state.projects.filter((project) => project.scheduleAuthorized===true && dueForSchedule(project, latestScanForProject(state, project.id)));
   const results = [];
 
   for (const project of due.slice(0, 2)) {
-    const assets=(project.assets||[]).filter((item)=>item.status==='active').slice(0,2);
+    const assets=(project.assets||[]).filter((item)=>item.status==='active'&&(!project.scheduledAssetIds||project.scheduledAssetIds.includes(item.id))).slice(0,2);
     if(!assets.length) continue;
     for(const asset of assets){
       try {
@@ -25,7 +25,7 @@ export async function GET(request) {
           project.id,
           asset.id,
           'schedule',
-          project.scheduledMode==='deep'?'deep':'standard'
+          project.scheduledMode==='deep'?'deep':'standard',null,project.scheduledEngines||[]
         );
         results.push({ projectId: project.id, assetId:asset.id, scanId: scan.id, status: 'completed', mode:scan.mode });
       } catch (error) {

@@ -1,0 +1,12 @@
+import {test} from 'node:test';
+import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+const source=(await fs.readFile(new URL('../app/api/scan/route.js',import.meta.url),'utf8')).replace(/^import .*;\n/gm,'').replace(/export /g,'');
+const created=[],executed=[];
+const job={id:'j',status:'queued',assetId:'a'};
+const api=new Function('scannerWorkerHealth','readState','waitUntil','createScanJob','executeScanJob','getScanJob',source+'\nreturn {GET,POST};')(async()=>({reachable:false,capabilities:{}}),async()=>({projects:[{id:'p',assets:[{id:'a'},{id:'b'}]}]}),()=>{},async input=>{created.push(input);return {...job,assetId:input.assetId}},async(id,input)=>{executed.push(input)},async()=>job);
+const req=body=>new Request('http://localhost/api/scan',{method:'POST',body:JSON.stringify(body)});
+test('job polling returns job without undefined batch variable',async()=>{const r=await api.GET(new Request('http://localhost/api/scan?jobId=j'));assert.equal(r.status,200);assert.equal((await r.json()).id,'j');});
+test('authorization required before queuing',async()=>{const r=await api.POST(req({projectId:'p',assetId:'a'}));assert.equal(r.status,400);});
+test('multiple target jobs are validated and queued',async()=>{const r=await api.POST(req({authorized:true,projectId:'p',assetIds:['a','b']}));assert.equal(r.status,202);assert.equal((await r.json()).jobs.length,2);});
+test('cross-workspace and duplicate target selections rejected',async()=>{for(const assetIds of [['other'],['a','a']])assert.equal((await api.POST(req({authorized:true,projectId:'p',assetIds}))).status,400);});

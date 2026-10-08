@@ -85,11 +85,11 @@ async function assertSafeTarget(engine,target){
 function fingerprint(engine,title,location,checkId=''){
   return crypto.createHash('sha1').update([engine,checkId,title,location].join('|')).digest('hex').slice(0,24);
 }
-function makeFinding({engine,checkId,category='Security',severity='Informational',title,summary,impact='',evidence='',location='',remediation='',confidence='High',evidenceQuality='validated'}){
+function makeFinding({cve=null,cvss=null,cwe=null,engine,checkId,category='Security',severity='Informational',title,summary,impact='',evidence='',location='',remediation='',confidence='High',evidenceQuality='validated'}){
   return {
     id:crypto.randomUUID(),
     fingerprint:fingerprint(engine,title,location,checkId),
-    engine,checkId,category,severity,title,summary,impact,evidence,
+    cve,cvss,cwe,engine,checkId,category,severity,title,summary,impact,evidence,
     location,affectedLocations:location?[location]:[],
     remediation,confidence,evidenceQuality,workflowStatus:'open'
   };
@@ -184,6 +184,7 @@ async function runNuclei(target){
       const location=item['matched-at']||item.host||item.url||target;
       findings.push(makeFinding({
         engine:'Nuclei',
+        cve:info.classification?.['cve-id'],cvss:info.classification?.['cvss-score'],cwe:info.classification?.['cwe-id'],
         checkId:'NUCLEI-'+(item['template-id']||'TEMPLATE'),
         category:'Exposure / Vulnerability',
         severity:mapSeverity(info.severity),
@@ -211,7 +212,7 @@ async function runTrivy(target){
     for(const v of entry.Vulnerabilities||[]){
       const location='dependency:'+(v.PkgName||entry.Target||'package');
       findings.push(makeFinding({
-        engine:'Trivy',checkId:v.VulnerabilityID||'TRIVY-VULN',category:'Code & Dependencies',severity:mapSeverity(v.Severity),
+        engine:'Trivy',cve:v.VulnerabilityID,cvss:v.CVSS,cwe:v.CweIDs,checkId:v.VulnerabilityID||'TRIVY-VULN',category:'Code & Dependencies',severity:mapSeverity(v.Severity),
         title:(v.VulnerabilityID||'Vulnerability')+' affects '+(v.PkgName||'dependency')+' '+(v.InstalledVersion||''),
         summary:(v.Title||v.Description||'Dependency vulnerability.').slice(0,1200),
         impact:v.PrimaryURL||'',evidence:['Target: '+(entry.Target||''),'Installed: '+(v.InstalledVersion||''),'Fixed: '+(v.FixedVersion||'not listed')].join('\n'),
@@ -363,12 +364,11 @@ const server=http.createServer(async(req,res)=>{
       ok:true,
       service:'inspector-scanner-worker',
       engines:{
-        zap:Boolean(ZAP_API_URL),
-        nuclei:true,
-        naabu:true,
-        trivy:true,
-        gitleaks:true,
-        openvas:Boolean(GREENBONE_ADAPTER_URL)
+        zap:await zapGet('view','core','version').then(()=>true).catch(()=>false),
+        ...Object.fromEntries(await Promise.all(['nuclei','naabu','trivy','gitleaks'].map(async engine=>{
+          try{const result=await runCommand(engine,engine==='nuclei'||engine==='naabu'?['-version']:engine==='trivy'?['--version']:['version'],{timeoutMs:3000});return [engine,result.code===0];}catch{return [engine,false];}
+        }))),
+        openvas:GREENBONE_ADAPTER_URL?await fetch(new URL('/health',GREENBONE_ADAPTER_URL),{signal:AbortSignal.timeout(3000),headers:GREENBONE_ADAPTER_TOKEN?{authorization:'Bearer '+GREENBONE_ADAPTER_TOKEN}:{}}).then(r=>r.ok).catch(()=>false):false
       },
       allowPrivateTargets:ALLOW_PRIVATE
     });
