@@ -131,9 +131,16 @@ export default function Home() {
     try {
       const created = await api({ action: 'create_project', ...projectForm });
       setProjectForm({ name:'', url:'', description:'', schedule:'manual' });
-      await refresh(created.id);
+      setData((prev) => ({
+        ...prev,
+        projects: [{ ...created, latestScan: null }, ...(prev.projects || []).filter((item) => item.id !== created.id)]
+      }));
+      setSelectedProjectId(created.id);
+      setSelectedScanId('');
+      setSettings({ name: created.name, schedule: created.schedule, webhookUrl: '' });
+      setAuthorized(false);
       setTab('overview');
-      setNotice('Project created. Confirm authorization and run the first scan.');
+      setNotice('Project created. Confirm authorization and click Run scan.');
     } catch (error) { setNotice(error.message); }
   }
 
