@@ -20,7 +20,11 @@ function statusTone(status){
 }
 function scanLabel(scan){
   if(!scan) return 'Scan';
-  return scan.scanType || (scan.mode==='deep'?'Attack Surface Scan':'Web App Scan');
+  if(scan.scanType) return scan.scanType;
+  if(scan._kind==='network'||scan.type==='network') return 'Internal Network Scan';
+  if(scan._kind==='auth'||scan.type==='authenticated-security') return 'Authenticated Scan';
+  if(scan._kind==='code'||scan.type==='code-security') return 'Code & Dependencies';
+  return scan.mode==='deep'?'Attack Surface Scan':'Web App Scan';
 }
 
 export default function Home(){
@@ -537,6 +541,65 @@ export default function Home(){
                   </div>
                 </div>
               </div>
+            )}
+          </section>
+        ):null}
+
+        {view==='networks'?(
+          <section className="page">
+            <header className="pageHeader">
+              <div><h1>Internal Networks</h1><p>Scan private RFC1918 networks from a worker deployed where those networks are reachable.</p></div>
+              <div className="headerActions">
+                <Badge tone={engineStatus?.worker?.configured?'success':'warning'}>{engineStatus?.worker?.configured?'Scanner worker connected':'Worker connection required'}</Badge>
+              </div>
+            </header>
+
+            {!project?<div className="emptyState">Select a workspace first.</div>:(
+              <>
+                {!engineStatus?.worker?.configured?(
+                  <div className="networkCallout">
+                    <div><strong>Connect an internal scanner worker</strong><span>Private targets are never routed through the public Vercel control plane. Deploy the Inspector scanner worker inside your VPC/network, enable private targets there, and connect it in Settings.</span></div>
+                    <button className="secondaryBtn" onClick={()=>setView('settings')}>View scanner setup</button>
+                  </div>
+                ):null}
+
+                <div className="networkLayout">
+                  <form className="settingsCard" onSubmit={addNetworkTarget}>
+                    <h2>Add internal network</h2>
+                    <p className="muted">For safety, this beta accepts RFC1918 IPv4 ranges from /24 to /32 only.</p>
+                    <label>Label<input placeholder="Office LAN" value={networkForm.label} onChange={e=>setNetworkForm({...networkForm,label:e.target.value})}/></label>
+                    <label>Private CIDR<input required placeholder="10.20.30.0/24" value={networkForm.cidr} onChange={e=>setNetworkForm({...networkForm,cidr:e.target.value})}/></label>
+                    <button className="primaryBtn">Add network</button>
+                  </form>
+
+                  <section className="settingsCard">
+                    <h2>How internal scanning works</h2>
+                    <div className="engineRows compact">
+                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Available':'Offline'}</Badge></div>
+                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={engineStatus?.worker?.configured?'blue':'neutral'}>{engineStatus?.worker?.configured?'Worker route':'Offline'}</Badge></div>
+                    </div>
+                    <label className="authConfirm networkAuth"><input type="checkbox" checked={networkAuthorized} onChange={e=>setNetworkAuthorized(e.target.checked)}/><span><strong>Authorization confirmed</strong><small>I own these private networks or have explicit permission to scan them.</small></span></label>
+                  </section>
+                </div>
+
+                <div className="sectionTitle"><h2>Networks</h2><span>{project.networks?.length||0} registered</span></div>
+                <div className="dataCard">
+                  <div className="tableHeader networkGrid"><span>Network</span><span>Last scanned</span><span>Open ports</span><span>Engine status</span><span/></div>
+                  {(project.networks||[]).map(network=>{
+                    const last=(project.networkScans||[]).find(scan=>scan.networkTargetId===network.id);
+                    const naabu=last?.engineRuns?.find(run=>run.engine==='naabu');
+                    const openvas=last?.engineRuns?.find(run=>run.engine==='openvas');
+                    return <div className="tableRow networkGrid" key={network.id}>
+                      <div className="targetName"><span className="expand">›</span><div><strong>{network.label}</strong><small>{network.cidr}</small></div></div>
+                      <span>{last?fmt(last.completedAt):'Never'}</span>
+                      <span>{last?.metrics?.openPorts??'—'}</span>
+                      <div className="engineMini"><Badge tone={naabu?.status==='completed'?'success':'neutral'}>Naabu {naabu?.status||'not run'}</Badge><Badge tone={openvas?.status==='completed'?'success':openvas?.status==='failed'?'warning':'neutral'}>OpenVAS {openvas?.status||'not run'}</Badge></div>
+                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!engineStatus?.worker?.configured} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
+                    </div>;
+                  })}
+                  {!project.networks?.length?<div className="emptyRow">No internal networks registered yet.</div>:null}
+                </div>
+              </>
             )}
           </section>
         ):null}
