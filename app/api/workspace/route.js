@@ -91,6 +91,37 @@ async function addAsset(projectId, input) {
   return asset;
 }
 
+async function updateAsset(projectId,assetId,input){
+  let updated=null;
+  const url=new URL(String(input.url||'').trim());
+  if(!['http:','https:'].includes(url.protocol)) throw new Error('Only HTTP(S) targets are supported.');
+  await mutateState((state)=>{
+    const project=state.projects.find((item)=>item.id===projectId);
+    if(!project) throw new Error('Project not found.');
+    const asset=(project.assets||[]).find((item)=>item.id===assetId);
+    if(!asset) throw new Error('Target not found.');
+    asset.url=url.href;
+    asset.label=String(input.label||url.hostname).trim().slice(0,100)||url.hostname;
+    updated={...asset};
+    return state;
+  });
+  return updated;
+}
+
+async function removeAsset(projectId,assetId){
+  let removed=null;
+  await mutateState((state)=>{
+    const project=state.projects.find((item)=>item.id===projectId);
+    if(!project) throw new Error('Project not found.');
+    const index=(project.assets||[]).findIndex((item)=>item.id===assetId);
+    if(index<0) throw new Error('Target not found.');
+    removed=project.assets[index];
+    project.assets.splice(index,1);
+    return state;
+  });
+  return {id:removed.id,historyRetained:true};
+}
+
 function privateIpv4(ip){
   const parts=String(ip||'').split('.').map(Number);
   if(parts.length!==4||parts.some((n)=>!Number.isInteger(n)||n<0||n>255)) return false;
@@ -211,6 +242,10 @@ export async function POST(request) {
       result = await updateProject(body.projectId, body.patch || {});
     } else if (body.action === 'add_asset') {
       result = await addAsset(body.projectId, body);
+    } else if (body.action === 'update_asset') {
+      result = await updateAsset(body.projectId,body.assetId,body);
+    } else if (body.action === 'remove_asset') {
+      result = await removeAsset(body.projectId,body.assetId);
     } else if (body.action === 'add_network_target') {
       result = await addNetworkTarget(body.projectId, body);
     } else if (body.action === 'finding_status') {

@@ -33,11 +33,15 @@ function reportFindings(sourceFindings,project,scan){
     title:finding.title,
     category:finding.category,
     engine:finding.engine,
-    target:finding.location||fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'',
+    target:finding.location||scan.finalUrl||scan.url||scan.target||project.assets?.[0]?.url||'',
     status:finding.workflowStatus||'open',
     summary:finding.summary,
     remediation:finding.remediation,
-    checkId:finding.checkId
+    checkId:finding.checkId,
+    evidence:finding.evidence,
+    cve:finding.cve||finding.cveId,
+    cvss:finding.cvssScore||finding.cvss,
+    cwe:finding.cwe||finding.cweId
   }));
 }
 
@@ -95,16 +99,24 @@ export async function GET(request){
     if(!scan && !rawFindings.length) return new Response('No completed scan is available',{status:404});
 
     const fallbackScan=scan||project.networkScans?.[0]||project.authScans?.[0]||project.codeScans?.[0]||{};
-    const findings=reportFindings(rawFindings,project,fallbackScan);
-    const summary=summarize(rawFindings);
-    const score=rawFindings.length?scoreFindings(rawFindings):(fallbackScan.score||0);
-    const executiveSummary='Inspector currently tracks '+rawFindings.length+' normalized risks across '+((project.assets?.length||0)+(project.networks?.length||0))+' registered targets. '+summary.critical+' Critical, '+summary.high+' High and '+summary.medium+' Medium findings are represented in this report.';
+    const severityFilter=url.searchParams.get('severity')||'All';
+    const statusFilter=url.searchParams.get('status')||'All';
+    const section=url.searchParams.get('section')||'all';
+    let findings=reportFindings(rawFindings,project,fallbackScan);
+    if(severityFilter!=='All') findings=findings.filter((finding)=>finding.severity===severityFilter);
+    if(statusFilter==='Open') findings=findings.filter((finding)=>['open','in_progress'].includes(finding.status));
+    if(statusFilter==='Accepted') findings=findings.filter((finding)=>finding.status==='accepted');
+    if(statusFilter==='Closed') findings=findings.filter((finding)=>['resolved','false_positive'].includes(finding.status));
+    if(section==='security') findings=findings.filter((finding)=>finding.severity!=='Informational');
+    const summary=summarize(findings);
+    const score=findings.length?scoreFindings(findings):(fallbackScan.score||0);
+    const executiveSummary='Inspector currently tracks '+findings.length+' normalized risks across '+((project.assets?.length||0)+(project.networks?.length||0))+' registered targets. '+summary.critical+' Critical, '+summary.high+' High and '+summary.medium+' Medium findings are represented in this report.';
     const slug=project.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'workspace';
 
     if(format==='csv'){
       const rows=[
-        ['Severity','Title','Category','Engine','Target','Status','Check ID','Summary','Remediation'],
-        ...findings.map(f=>[f.severity,f.title,f.category,f.engine,f.target,f.status,f.checkId,f.summary,f.remediation])
+        ['Severity','Title','Category','Engine','Target','Status','Check ID','Summary','Remediation',...(section==='technical'?['Evidence','CVE','CVSS','CWE']:[])],
+        ...findings.map(f=>[f.severity,f.title,f.category,f.engine,f.target,f.status,f.checkId,f.summary,f.remediation,...(section==='technical'?[f.evidence,f.cve,f.cvss,f.cwe]:[])])
       ];
       const body=rows.map(row=>row.map(csvCell).join(',')).join('\n');
       return new Response(body,{
@@ -123,8 +135,8 @@ export async function GET(request){
         ['Medium',summary.medium||0,'#ffb365'],
         ['Low',summary.low||0,'#fae64a']
       ].map(([label,count,color])=>'<div style="background:'+color+';padding:18px;border-radius:10px"><div style="font-size:13px">'+label+'</div><div style="font-size:34px;text-align:right">'+count+'</div></div>').join('');
-      const rows=findings.slice(0,200).map((f)=>'<tr><td><strong>'+escapeHtml(f.severity)+'</strong></td><td><strong>'+escapeHtml(f.title)+'</strong><br><span>'+escapeHtml(f.summary)+'</span></td><td>'+escapeHtml(f.target)+'</td><td>'+escapeHtml(f.status)+'</td><td>'+escapeHtml(f.remediation)+'</td></tr>').join('');
-      const html='<!doctype html><html><head><meta charset="utf-8"><title>Inspector report</title><style>body{font-family:Arial,sans-serif;color:#172033;margin:0;background:#f3f5f8}.wrap{max-width:1100px;margin:32px auto;background:white;padding:36px;border-radius:12px}.top{display:flex;justify-content:space-between;gap:30px}.score{font-size:48px;font-weight:700}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #e4e8ee}th{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#6b7280}td span{font-size:11px;color:#687384;line-height:1.45}.meta{color:#718096;font-size:12px}.summary{line-height:1.6;color:#495565}@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}.top{display:block}}</style></head><body><div class="wrap"><div class="top"><div><div style="font-size:11px;letter-spacing:.15em;color:#6c7481">INSPECTOR SECURITY REPORT</div><h1>'+escapeHtml(project.name)+'</h1><div class="meta">'+escapeHtml(fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'')+' · '+escapeHtml(new Date(fallbackScan.completedAt||fallbackScan.scannedAt||Date.now()).toLocaleString())+'</div></div><div><div class="score">'+escapeHtml(score)+'</div><div class="meta">Assurance score / 100</div></div></div><h2>Executive summary</h2><p class="summary">'+escapeHtml(executiveSummary)+'</p><div class="cards">'+cards+'</div><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Finding</th><th>Target</th><th>Status</th><th>Recommended fix</th></tr></thead><tbody>'+rows+'</tbody></table></div></body></html>';
+      const rows=findings.slice(0,200).map((f)=>'<tr><td><strong>'+escapeHtml(f.severity)+'</strong></td><td><strong>'+escapeHtml(f.title)+'</strong><br><span>'+escapeHtml(f.summary)+'</span></td><td>'+escapeHtml(f.target)+'</td><td>'+escapeHtml(f.status)+'</td><td>'+escapeHtml(f.remediation)+'</td>'+(section==='technical'?'<td>'+escapeHtml(f.evidence)+'</td>':'')+'</tr>').join('');
+      const html='<!doctype html><html><head><meta charset="utf-8"><title>Inspector report</title><style>body{font-family:Arial,sans-serif;color:#172033;margin:0;background:#f3f5f8}.wrap{max-width:1100px;margin:32px auto;background:white;padding:36px;border-radius:12px}.top{display:flex;justify-content:space-between;gap:30px}.score{font-size:48px;font-weight:700}.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:26px 0}table{width:100%;border-collapse:collapse;font-size:12px}th,td{text-align:left;vertical-align:top;padding:12px;border-bottom:1px solid #e4e8ee}th{font-size:10px;text-transform:uppercase;letter-spacing:.1em;color:#6b7280}td span{font-size:11px;color:#687384;line-height:1.45}.meta{color:#718096;font-size:12px}.summary{line-height:1.6;color:#495565}@media(max-width:700px){.cards{grid-template-columns:1fr 1fr}.top{display:block}}</style></head><body><div class="wrap"><div class="top"><div><div style="font-size:11px;letter-spacing:.15em;color:#6c7481">INSPECTOR SECURITY REPORT</div><h1>'+escapeHtml(project.name)+'</h1><div class="meta">'+escapeHtml(fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'')+' · '+escapeHtml(new Date(fallbackScan.completedAt||fallbackScan.scannedAt||Date.now()).toLocaleString())+'</div></div><div><div class="score">'+escapeHtml(score)+'</div><div class="meta">Assurance score / 100</div></div></div><h2>Executive summary</h2><p class="summary">'+escapeHtml(executiveSummary)+'</p><div class="cards">'+cards+'</div><h2>Findings</h2><table><thead><tr><th>Severity</th><th>Finding</th><th>Target</th><th>Status</th><th>Recommended fix</th>'+(section==='technical'?'<th>Evidence</th>':'')+'</tr></thead><tbody>'+rows+'</tbody></table></div></body></html>';
       return new Response(html,{
         headers:{
           'content-type':'text/html; charset=utf-8',
@@ -163,6 +175,7 @@ export async function GET(request){
       for(const line of wrap(finding.summary,90).slice(0,3)) addLine(line,8,regular,11);
       const fix=wrap(finding.remediation,82)[0];
       if(fix) addLine('Fix: '+fix,8,regular,13);
+      if(section==='technical'&&finding.evidence) addLine('Evidence: '+wrap(finding.evidence,82)[0],8,regular,13);
       y-=4;
     });
     y-=5;

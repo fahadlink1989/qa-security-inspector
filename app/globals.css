@@ -252,3 +252,5 @@ a{text-decoration:none;color:inherit}
   .networkGrid{grid-template-columns:1fr}
   .networkGrid.tableHeader{display:none}
 }
+
+.targetActions{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:240px}.targetActions .smallBtn{padding:8px 10px}.targetActions .rowMenu{white-space:nowrap}
