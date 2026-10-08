@@ -40,6 +40,7 @@ export default function Home(){
   const [selectedRisk,setSelectedRisk]=useState(null);
   const [retesting,setRetesting]=useState(false);
   const [settings,setSettings]=useState({name:'',schedule:'manual',webhookUrl:''});
+  const [engineStatus,setEngineStatus]=useState(null);
   const [targetUrl,setTargetUrl]=useState('');
   const [newScan,setNewScan]=useState({
     type:'deep',
@@ -54,10 +55,14 @@ export default function Home(){
   async function load(preferredProjectId){
     setLoading(true);
     try{
-      const response=await fetch('/api/workspace',{cache:'no-store'});
+      const [response,engineResponse]=await Promise.all([
+        fetch('/api/workspace',{cache:'no-store'}),
+        fetch('/api/engine-status',{cache:'no-store'}).catch(()=>null)
+      ]);
       const json=await response.json();
       if(!response.ok) throw new Error(json.error||'Could not load workspace.');
       setData(json);
+      if(engineResponse?.ok) setEngineStatus(await engineResponse.json());
       const id=preferredProjectId || selectedProjectId || json.projects?.[0]?.id || '';
       setSelectedProjectId(id);
       const p=json.projects?.find(x=>x.id===id);
@@ -486,10 +491,10 @@ export default function Home(){
                   <p className="muted">Inspector normalizes results behind one risk model. Heavy open-source scanners should run in isolated container workers, not in the web application.</p>
                   <div className="engineRows">
                     <div><strong>Playwright + axe-core</strong><span>Rendered browser QA and accessibility</span><Badge tone="success">Connected</Badge></div>
-                    <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone="blue">Worker adapter</Badge></div>
-                    <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone="blue">Worker adapter</Badge></div>
-                    <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone="blue">Worker adapter</Badge></div>
-                    <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone="blue">Worker adapter</Badge></div>
+                    <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
+                    <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
+                    <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
+                    <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
                   </div>
                   <p className="muted small">Commercial licensing should be reviewed before redistributing third-party binaries. Nmap is intentionally not an embedded default.</p>
                 </section>
