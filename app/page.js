@@ -30,6 +30,7 @@ export default function Home() {
   const [authorized, setAuthorized] = useState(false);
   const [loading, setLoading] = useState(true);
   const [scanning, setScanning] = useState(false);
+  const [retesting, setRetesting] = useState(false);
   const [notice, setNotice] = useState('');
   const [severityFilter, setSeverityFilter] = useState('All');
 
@@ -195,6 +196,23 @@ export default function Home() {
     } catch (error) { setNotice(error.message); }
   }
 
+  async function retestCurrentFinding() {
+    if (!scan || !finding || !authorized) return;
+    setRetesting(true);
+    setNotice('Retesting this finding against the current asset…');
+    try {
+      const result = await api({ action:'retest_finding', scanId:scan.id, fingerprint:finding.fingerprint });
+      await refresh(project.id, result.scan.id);
+      setFinding(result.currentFinding || null);
+      setTab('findings');
+      setNotice(result.status === 'resolved' ? 'Retest passed: the finding is no longer present.' : 'Retest completed: the finding is still present.');
+    } catch (error) {
+      setNotice(error.message);
+    } finally {
+      setRetesting(false);
+    }
+  }
+
   function selectProject(id) {
     setSelectedProjectId(id);
     const nextScan = (data.scans || []).find((item) => item.projectId === id);
@@ -218,6 +236,8 @@ export default function Home() {
             ['assets','Assets'],
             ['scans','Scans'],
             ['findings','Findings'],
+            ['quality','Browser QA'],
+            ['surface','Discovery'],
             ['reports','Reports'],
             ['settings','Settings']
           ].map(([key,label]) => (
@@ -416,6 +436,66 @@ export default function Home() {
           </section>
         ) : null}
 
+
+        {!loading && tab === 'quality' ? (
+          <section className="panel">
+            <div className="sectionHead"><div><span className="eyebrow">REAL BROWSER ENGINE</span><h2>Browser QA</h2><p>Rendered Chromium signals, runtime errors, network failures and basic accessibility checks.</p></div></div>
+            {!scan ? <div className="empty">Run a scan to populate browser QA.</div> : (
+              <>
+                <div className="coverageGrid">
+                  <div><span>Engine</span><b>{scan.metrics.browserAvailable ? 'Chromium' : 'Degraded'}</b></div>
+                  <div><span>Load time</span><b>{scan.metrics.browserLoadMs ? scan.metrics.browserLoadMs + ' ms' : '—'}</b></div>
+                  <div><span>Resources</span><b>{scan.metrics.resourceCount || 0}</b></div>
+                  <div><span>Transfer</span><b>{scan.metrics.transferBytes ? Math.round(scan.metrics.transferBytes/1024) + ' KB' : '—'}</b></div>
+                  <div><span>Console errors</span><b>{scan.metrics.consoleErrors || 0}</b></div>
+                  <div><span>Failed requests</span><b>{scan.metrics.failedRequests || 0}</b></div>
+                </div>
+                <div className="assetList">
+                  {(scan.findings || []).filter((item)=>item.engine==='browser').map((item)=>(
+                    <button className="assetRow" key={item.id} onClick={()=>setFinding(item)}>
+                      <div><Severity value={item.severity}/><strong>{item.title}</strong><span>{item.summary}</span></div>
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        ) : null}
+
+        {!loading && tab === 'surface' ? (
+          <section className="panel">
+            <div className="sectionHead"><div><span className="eyebrow">DISCOVERY & INVENTORY</span><h2>Attack surface</h2><p>Crawled pages, API paths, technology signals and common public subdomains observed by the scan.</p></div></div>
+            {!scan ? <div className="empty">Run a scan to populate discovery.</div> : (
+              <>
+                <div className="coverageGrid">
+                  <div><span>Pages crawled</span><b>{scan.metrics.pagesCrawled || 0}</b></div>
+                  <div><span>API paths</span><b>{scan.metrics.apiEndpoints || 0}</b></div>
+                  <div><span>Technologies</span><b>{scan.metrics.technologies || 0}</b></div>
+                  <div><span>Subdomains</span><b>{scan.metrics.subdomains || 0}</b></div>
+                </div>
+                <div className="projectList">
+                  <div className="sectionHead"><div><h3>Technology signals</h3></div></div>
+                  {(scan.evidence?.inventory?.technologies || []).map((item)=>(
+                    <div className="projectRow" key={item.name}><div><strong>{item.name}</strong><span>{item.evidence} · {item.confidence} confidence</span></div></div>
+                  ))}
+                  <div className="sectionHead"><div><h3>API paths</h3></div></div>
+                  {(scan.evidence?.inventory?.apiEndpoints || []).map((path)=>(
+                    <div className="projectRow" key={path}><div><strong>{path}</strong><span>Observed in same-host application markup/scripts</span></div></div>
+                  ))}
+                  <div className="sectionHead"><div><h3>Discovered subdomains</h3></div></div>
+                  {(scan.evidence?.inventory?.commonSubdomains || []).map((item)=>(
+                    <div className="projectRow" key={item.host}><div><strong>{item.host}</strong><span>{(item.ips || []).join(', ')}</span></div></div>
+                  ))}
+                  <div className="sectionHead"><div><h3>Crawled pages</h3></div></div>
+                  {(scan.evidence?.inventory?.pages || []).map((item)=>(
+                    <div className="projectRow" key={item.url}><div><strong>{item.url}</strong><span>HTTP {item.status || 'ERR'} · {item.source}</span></div></div>
+                  ))}
+                </div>
+              </>
+            )}
+          </section>
+        ) : null}
+
         {!loading && tab === 'reports' ? (
           <section className="panel reportPanel">
             <div><span className="eyebrow">EXECUTIVE + TECHNICAL</span><h2>Reports</h2><p>Export the latest project state for stakeholders or remediation tracking.</p></div>
@@ -462,6 +542,7 @@ export default function Home() {
               <button onClick={()=>setFindingStatus('resolved')}>Resolved</button>
               <button onClick={()=>setFindingStatus('accepted')}>Accept risk</button>
               <button onClick={()=>setFindingStatus('false_positive')}>False positive</button>
+              <button disabled={!authorized || retesting} onClick={retestCurrentFinding}>{retesting ? 'Retesting…' : 'Retest finding'}</button>
             </div></section>
             <div className="drawerFooter"><span>{finding.checkId}</span><span>{finding.confidence} confidence</span></div>
           </aside>
