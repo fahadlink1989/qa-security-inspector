@@ -1,6 +1,6 @@
 import { latestScanForProject, readState } from '../../../lib/store';
 import { dueForSchedule } from '../../../lib/scanner';
-import { runProjectScan } from '../../../lib/platform';
+import { runProjectScan } from '../../../lib/scanService';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
