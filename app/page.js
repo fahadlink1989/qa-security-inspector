@@ -39,6 +39,7 @@ export default function Home(){
   const [onboardingChoice,setOnboardingChoice]=useState('');
   const [scanRunning,setScanRunning]=useState(false);
   const [scanTab,setScanTab]=useState('history');
+  const [reportFilters,setReportFilters]=useState({severity:'All',status:'All',section:'all'});
   const [riskSeverity,setRiskSeverity]=useState('All');
   const [riskStatus,setRiskStatus]=useState('All');
   const [selectedRisk,setSelectedRisk]=useState(null);
@@ -334,6 +335,15 @@ export default function Home(){
     setNewScanOpen(true);
   }
 
+  function reportHref(format,preview=false){
+    if(!project) return '#';
+    const params=new URLSearchParams({projectId:project.id,format,section:reportFilters.section});
+    if(preview) params.set('preview','1');
+    if(reportFilters.severity!=='All') params.set('severity',reportFilters.severity);
+    if(reportFilters.status!=='All') params.set('status',reportFilters.status);
+    return '/api/report?'+params.toString();
+  }
+
   function finishOnboarding(){
     try{localStorage.setItem('inspector-onboarding-v2','1');}catch{}
     setOnboardingOpen(false);
@@ -551,19 +561,21 @@ export default function Home(){
           <section className="page">
             <header className="pageHeader"><div><h1>Reports</h1><p>Create stakeholder-ready reports from the latest workspace findings.</p></div></header>
             <div className="tabs"><button className="active">Reports</button><button>Scheduled Reports</button></div>
-            {!project||!latestScan?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p></div>:(
+            {!project||(!latestScan&&!summary.total)?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p></div>:(
               <div className="reportBuilder">
                 <h2>Create a Report</h2>
                 <label>Report scope<span>Latest completed scan for {project.name}</span></label>
-                <label>Sections
-                  <select defaultValue="all"><option value="all">Executive summary + all findings</option><option value="security">Security findings only</option><option value="technical">Technical evidence</option></select>
-                </label>
+                <div className="reportFilters">
+                  <label>Severity<select value={reportFilters.severity} onChange={e=>setReportFilters({...reportFilters,severity:e.target.value})}><option>All</option><option>Critical</option><option>High</option><option>Medium</option><option>Low</option><option>Informational</option></select></label>
+                  <label>Status<select value={reportFilters.status} onChange={e=>setReportFilters({...reportFilters,status:e.target.value})}><option>All</option><option>Open</option><option>Accepted</option><option>Closed</option></select></label>
+                  <label>Sections<select value={reportFilters.section} onChange={e=>setReportFilters({...reportFilters,section:e.target.value})}><option value="all">Executive summary + all findings</option><option value="security">Security findings only</option><option value="technical">Technical evidence</option></select></label>
+                </div>
                 <div className="reportActions">
-                  <a className="previewBtn" target="_blank" rel="noreferrer" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=html&preview=1'}>Preview Report ({project.assets?.length||0} targets, {summary.total} risks)</a>
+                  <a className="previewBtn" target="_blank" rel="noreferrer" href={reportHref('html',true)}>Preview Report ({project.assets?.length||0} targets, {summary.total} risks)</a>
                   <div>
-                    <a className="secondaryBtn linkBtn" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=pdf'}>Download PDF ⇩</a>
-                    <a className="secondaryBtn linkBtn" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=csv'}>Download CSV ⇩</a>
-                    <a className="secondaryBtn linkBtn" href={'/api/report?projectId='+encodeURIComponent(project.id)+'&format=html'}>Download HTML ⇩</a>
+                    <a className="secondaryBtn linkBtn" href={reportHref('pdf')}>Download PDF ⇩</a>
+                    <a className="secondaryBtn linkBtn" href={reportHref('csv')}>Download CSV ⇩</a>
+                    <a className="secondaryBtn linkBtn" href={reportHref('html')}>Download HTML ⇩</a>
                   </div>
                 </div>
               </div>
