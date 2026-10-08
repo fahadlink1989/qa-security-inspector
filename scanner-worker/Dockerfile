@@ -12,6 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 ARG NUCLEI_VERSION=latest
 ARG TRIVY_VERSION=latest
 ARG GITLEAKS_VERSION=latest
+ARG NAABU_VERSION=latest
 
 RUN set -eux; \
   arch="$(dpkg --print-architecture)"; \
@@ -28,6 +29,10 @@ RUN set -eux; \
   gv="${GITLEAKS_VERSION#v}"; \
   curl -fsSL -o /tmp/gitleaks.tar.gz "https://github.com/gitleaks/gitleaks/releases/download/${GITLEAKS_VERSION}/gitleaks_${gv}_linux_${garch}.tar.gz"; \
   tar -xzf /tmp/gitleaks.tar.gz -C /tmp gitleaks; install /tmp/gitleaks /usr/local/bin/gitleaks; \
+  if [ "$NAABU_VERSION" = "latest" ]; then NAABU_VERSION="$(curl -fsSL https://api.github.com/repos/projectdiscovery/naabu/releases/latest | jq -r .tag_name)"; fi; \
+  nv2="${NAABU_VERSION#v}"; \
+  curl -fsSL -o /tmp/naabu.zip "https://github.com/projectdiscovery/naabu/releases/download/${NAABU_VERSION}/naabu_${nv2}_linux_${narch}.zip"; \
+  unzip -q /tmp/naabu.zip -d /tmp/naabu; install /tmp/naabu/naabu /usr/local/bin/naabu; \
   rm -rf /tmp/*
 
 COPY package.json ./
