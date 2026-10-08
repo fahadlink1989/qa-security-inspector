@@ -1,10 +1,10 @@
-import { scannerWorkerStatus } from '../../../lib/workerClient';
+import { scannerWorkerHealth } from '../../../lib/workerClient';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 
 export async function GET(){
-  const worker=scannerWorkerStatus();
+  const worker=await scannerWorkerHealth();
   return Response.json({
     builtIn:[
       {id:'playwright',name:'Playwright',purpose:'Rendered browser QA',status:'connected'},
@@ -24,3 +24,4 @@ export async function GET(){
     }
   },{headers:{'cache-control':'no-store'}});
 }
+

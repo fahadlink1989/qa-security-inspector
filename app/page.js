@@ -247,7 +247,7 @@ export default function Home(){
   async function runNetworkScan(networkTargetId){
     if(!project||!networkAuthorized) return;
     setNetworkScanningId(networkTargetId);
-    setNotice('Internal network scan started. Naabu will perform rate-limited TCP discovery and Greenbone/OpenVAS will run when configured on the internal worker.');
+    setNotice('Queueing the internal scan on the authorized worker…');
     try{
       const response=await fetch('/api/network-scan',{
         method:'POST',
@@ -256,9 +256,10 @@ export default function Home(){
       });
       const result=await response.json();
       if(!response.ok) throw new Error(result.error||'Network scan failed.');
-      await load(project.id);
-      setView('risks');
-      setNotice('Internal network scan completed. Review normalized risks and engine coverage.');
+      await load(project.id,true);
+      setView('scans');
+      setScanTab('history');
+      setNotice('Internal Network Scan queued. Progress and engine coverage will update here.');
     }catch(error){setNotice(error.message);}
     finally{setNetworkScanningId('');}
   }
@@ -310,15 +311,10 @@ export default function Home(){
       setNewScan(prev=>({...prev,credential:'',repositoryToken:'',authorized:false}));
       setNewScanOpen(false);
 
-      if(['standard','deep'].includes(newScan.type)){
-        await load(project.id,true);
-        setView('scans');
-        setNotice((newScan.type==='deep'?'Attack Surface Scan':'Web App Scan')+' queued. You can leave this page; progress will update automatically.');
-      }else{
-        await load(project.id);
-        setView('risks');
-        setNotice('Scan completed. Review the risks and remediation guidance.');
-      }
+      await load(project.id,true);
+      setView('scans');
+      setScanTab('history');
+      setNotice((result.scanType||'Scan')+' queued. Progress and completion status will update here.');
     }catch(error){setNotice(error.message);}
     finally{setScanRunning(false);}
   }
@@ -610,13 +606,13 @@ export default function Home(){
             <header className="pageHeader">
               <div><h1>Internal Networks</h1><p>Scan private RFC1918 networks from a worker deployed where those networks are reachable.</p></div>
               <div className="headerActions">
-                <Badge tone={engineStatus?.worker?.configured?'success':'warning'}>{engineStatus?.worker?.configured?'Scanner worker connected':'Worker connection required'}</Badge>
+              <Badge tone={engineStatus?.worker?.connected?'success':'warning'}>{engineStatus?.worker?.connected?'Scanner worker connected':'Worker connection required'}</Badge>
               </div>
             </header>
 
             {!project?<div className="emptyState">Select a workspace first.</div>:(
               <>
-                {!engineStatus?.worker?.configured?(
+                {!engineStatus?.worker?.connected?(
                   <div className="networkCallout">
                     <div><strong>Connect an internal scanner worker</strong><span>Private targets are never routed through the public Vercel control plane. Deploy the Inspector scanner worker inside your VPC/network, enable private targets there, and connect it in Settings.</span></div>
                     <button className="secondaryBtn" onClick={()=>setView('settings')}>View scanner setup</button>
@@ -635,8 +631,8 @@ export default function Home(){
                   <section className="settingsCard">
                     <h2>How internal scanning works</h2>
                     <div className="engineRows compact">
-                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Available':'Offline'}</Badge></div>
-                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={engineStatus?.worker?.configured?'blue':'neutral'}>{engineStatus?.worker?.configured?'Worker route':'Offline'}</Badge></div>
+                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Available':'Offline'}</Badge></div>
+                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={engineStatus?.worker?.connected?'blue':'neutral'}>{engineStatus?.worker?.connected?'Worker route':'Offline'}</Badge></div>
                     </div>
                     <label className="authConfirm networkAuth"><input type="checkbox" checked={networkAuthorized} onChange={e=>setNetworkAuthorized(e.target.checked)}/><span><strong>Authorization confirmed</strong><small>I own these private networks or have explicit permission to scan them.</small></span></label>
                   </section>
@@ -654,7 +650,7 @@ export default function Home(){
                       <span>{last?fmt(last.completedAt):'Never'}</span>
                       <span>{last?.metrics?.openPorts??'—'}</span>
                       <div className="engineMini"><Badge tone={naabu?.status==='completed'?'success':'neutral'}>Naabu {naabu?.status||'not run'}</Badge><Badge tone={openvas?.status==='completed'?'success':openvas?.status==='failed'?'warning':'neutral'}>OpenVAS {openvas?.status||'not run'}</Badge></div>
-                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!engineStatus?.worker?.configured} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
+                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!engineStatus?.worker?.connected} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
                     </div>;
                   })}
                   {!project.networks?.length?<div className="emptyRow">No internal networks registered yet.</div>:null}
@@ -683,11 +679,11 @@ export default function Home(){
                   <p className="muted">Inspector normalizes results behind one risk model. Heavy open-source scanners should run in isolated container workers, not in the web application.</p>
                   <div className="engineRows">
                     <div><strong>Playwright + axe-core</strong><span>Rendered browser QA and accessibility</span><Badge tone="success">Connected</Badge></div>
-                    <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Naabu</strong><span>Rate-limited TCP port discovery</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
-                    <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone={engineStatus?.worker?.configured?'success':'neutral'}>{engineStatus?.worker?.configured?'Connected':'Ready to connect'}</Badge></div>
+                    <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
+                    <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
+                    <div><strong>Naabu</strong><span>Rate-limited TCP port discovery</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
+                    <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
+                    <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
                   </div>
                   <p className="muted small">Commercial licensing should be reviewed before redistributing third-party binaries. Nmap is intentionally not an embedded default.</p>
                 </section>
@@ -778,3 +774,4 @@ export default function Home(){
     </main>
   );
 }
+
