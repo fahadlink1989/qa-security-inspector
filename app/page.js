@@ -93,12 +93,6 @@ export default function Home(){
     }catch{}
   },[]);
 
-  useEffect(()=>{
-    if(!activeJobs.length||!selectedProjectId) return;
-    const timer=setInterval(()=>load(selectedProjectId,true),2500);
-    return ()=>clearInterval(timer);
-  },[activeJobs.length,selectedProjectId]);
-
   const project=useMemo(()=>data.projects.find(p=>p.id===selectedProjectId)||null,[data.projects,selectedProjectId]);
   const scans=useMemo(()=>(data.scans||[]).filter(s=>s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId]);
   const latestScan=useMemo(()=>scans[0]||null,[scans]);
@@ -108,6 +102,12 @@ export default function Home(){
       .sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))),
     [data.jobs,selectedProjectId]
   );
+
+  useEffect(()=>{
+    if(!activeJobs.length||!selectedProjectId) return;
+    const timer=setInterval(()=>load(selectedProjectId,true),2500);
+    return ()=>clearInterval(timer);
+  },[activeJobs.length,selectedProjectId]);
 
   const scanRows=useMemo(()=>{
     const rows=[
