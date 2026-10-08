@@ -18,6 +18,7 @@
     "@sparticuz/chromium": "latest",
     "ai": "7.0.130",
     "@axe-core/playwright": "4.13.0",
-    "@ai-sdk/openai": "latest"
+    "@ai-sdk/openai": "latest",
+    "@vercel/functions": "latest"
   }
 }
