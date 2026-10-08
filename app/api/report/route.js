@@ -33,11 +33,15 @@ function reportFindings(sourceFindings,project,scan){
     title:finding.title,
     category:finding.category,
     engine:finding.engine,
-    target:finding.location||fallbackScan.finalUrl||fallbackScan.url||fallbackScan.target||project.assets?.[0]?.url||'',
+    target:finding.location||scan.finalUrl||scan.url||scan.target||project.assets?.[0]?.url||'',
     status:finding.workflowStatus||'open',
     summary:finding.summary,
     remediation:finding.remediation,
-    checkId:finding.checkId
+    checkId:finding.checkId,
+    evidence:finding.evidence,
+    cve:finding.cve||finding.cveId,
+    cvss:finding.cvssScore||finding.cvss,
+    cwe:finding.cwe||finding.cweId
   }));
 }
 
@@ -95,16 +99,24 @@ export async function GET(request){
     if(!scan && !rawFindings.length) return new Response('No completed scan is available',{status:404});
 
     const fallbackScan=scan||project.networkScans?.[0]||project.authScans?.[0]||project.codeScans?.[0]||{};
-    const findings=reportFindings(rawFindings,project,fallbackScan);
-    const summary=summarize(rawFindings);
-    const score=rawFindings.length?scoreFindings(rawFindings):(fallbackScan.score||0);
-    const executiveSummary='Inspector currently tracks '+rawFindings.length+' normalized risks across '+((project.assets?.length||0)+(project.networks?.length||0))+' registered targets. '+summary.critical+' Critical, '+summary.high+' High and '+summary.medium+' Medium findings are represented in this report.';
+    const severityFilter=url.searchParams.get('severity')||'All';
+    const statusFilter=url.searchParams.get('status')||'All';
+    const section=url.searchParams.get('section')||'all';
+    let findings=reportFindings(rawFindings,project,fallbackScan);
+    if(severityFilter!=='All') findings=findings.filter((finding)=>finding.severity===severityFilter);
+    if(statusFilter==='Open') findings=findings.filter((finding)=>['open','in_progress'].includes(finding.status));
+    if(statusFilter==='Accepted') findings=findings.filter((finding)=>finding.status==='accepted');
+    if(statusFilter==='Closed') findings=findings.filter((finding)=>['resolved','false_positive'].includes(finding.status));
+    if(section==='security') findings=findings.filter((finding)=>finding.severity!=='Informational');
+    const summary=summarize(findings);
+    const score=findings.length?scoreFindings(findings):(fallbackScan.score||0);
+    const executiveSummary='Inspector currently tracks '+findings.length+' normalized risks across '+((project.assets?.length||0)+(project.networks?.length||0))+' registered targets. '+summary.critical+' Critical, '+summary.high+' High and '+summary.medium+' Medium findings are represented in this report.';
     const slug=project.name.toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||'workspace';
 
     if(format==='csv'){
       const rows=[
-        ['Severity','Title','Category','Engine','Target','Status','Check ID','Summary','Remediation'],
-        ...findings.map(f=>[f.severity,f.title,f.category,f.engine,f.target,f.status,f.checkId,f.summary,f.remediation])
+        ['Severity','Title','Category','Engine','Target','Status','Check ID','Summary','Remediation',...(section==='technical'?['Evidence','CVE','CVSS','CWE']:[])],
+        ...findings.map(f=>[f.severity,f.title,f.category,f.engine,f.target,f.status,f.checkId,f.summary,f.remediation,...(section==='technical'?[f.evidence,f.cve,f.cvss,f.cwe]:[])])
       ];
       const body=rows.map(row=>row.map(csvCell).join(',')).join('\n');
       return new Response(body,{
@@ -163,6 +175,7 @@ export async function GET(request){
       for(const line of wrap(finding.summary,90).slice(0,3)) addLine(line,8,regular,11);
       const fix=wrap(finding.remediation,82)[0];
       if(fix) addLine('Fix: '+fix,8,regular,13);
+      if(section==='technical'&&finding.evidence) addLine('Evidence: '+wrap(finding.evidence,82)[0],8,regular,13);
       y-=4;
     });
     y-=5;
