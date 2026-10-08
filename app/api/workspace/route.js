@@ -107,6 +107,27 @@ async function updateFindingStatus(scanId, fingerprint, status) {
   return changed;
 }
 
+async function updateAuthFindingStatus(projectId, authScanId, fingerprint, status) {
+  if (!['open','in_progress','resolved','accepted','false_positive'].includes(status)) {
+    throw new Error('Invalid finding status.');
+  }
+
+  let changed = null;
+  await mutateState((state) => {
+    const project = state.projects.find((item) => item.id === projectId);
+    if (!project) throw new Error('Project not found.');
+    const authScan = (project.authScans || []).find((item) => item.id === authScanId);
+    if (!authScan) throw new Error('Authenticated Scan not found.');
+    const finding = (authScan.findings || []).find((item) => item.fingerprint === fingerprint);
+    if (!finding) throw new Error('Finding not found.');
+    finding.workflowStatus = status;
+    finding.statusUpdatedAt = new Date().toISOString();
+    changed = finding;
+    return state;
+  });
+  return changed;
+}
+
 export async function GET() {
   try {
     const data = await getWorkspaceView();
@@ -133,6 +154,13 @@ export async function POST(request) {
     } else if (body.action === 'retest_finding') {
       const { retestFinding } = await import('../../../lib/scanService');
       result = await retestFinding(body.scanId, body.fingerprint);
+    } else if (body.action === 'auth_finding_status') {
+      result = await updateAuthFindingStatus(
+        body.projectId,
+        body.authScanId,
+        body.fingerprint,
+        body.status
+      );
     } else {
       throw new Error('Unknown action.');
     }
