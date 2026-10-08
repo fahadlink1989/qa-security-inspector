@@ -1,4 +1,4 @@
-import { runProjectScan } from '../../../lib/platform';
+import { runProjectScan } from '../../../lib/scanService';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
