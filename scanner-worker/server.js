@@ -134,6 +134,7 @@ async function waitUntil(check,{timeoutMs=110000,intervalMs=1500}={}){
 }
 async function runZap(target){
   const startedAt=new Date().toISOString();
+  await zapGet('action','core','newSession',{name:'',overwrite:true});
   const spider=await zapGet('action','spider','scan',{url:target,maxChildren:40,recurse:true,subtreeOnly:true});
   const scanId=spider.scan;
   await waitUntil(async()=>{
@@ -168,7 +169,8 @@ async function runZap(target){
 async function runNuclei(target){
   const startedAt=new Date().toISOString();
   const args=[
-    '-u',target,'-jsonl','-silent',
+    '-u',target,'-jsonl','-silent','-t',process.env.NUCLEI_TEMPLATES||'/home/node/nuclei-templates',
+    '-type','http','-disable-redirects','-no-interactsh',
     '-severity','info,low,medium,high,critical',
     '-tags','cve,misconfig,exposure',
     '-etags','fuzz,dos,bruteforce,intrusive,headless',
@@ -198,7 +200,7 @@ async function runNuclei(target){
       }));
     }catch{}
   }
-  return {engine:'nuclei',name:'Nuclei Safe',status:result.code===0||findings.length?'completed':'completed_with_gaps',startedAt,completedAt:new Date().toISOString(),findings,metrics:{matches:findings.length},stderr:result.code&& !findings.length?result.stderr.slice(0,1200):undefined};
+  return {engine:'nuclei',name:'Nuclei Safe',status:result.code===0?'completed':'completed_with_gaps',startedAt,completedAt:new Date().toISOString(),findings,metrics:{matches:findings.length},stderr:result.code&& !findings.length?result.stderr.slice(0,1200):undefined};
 }
 
 async function runTrivy(target){
@@ -238,7 +240,7 @@ async function runTrivy(target){
       }));
     }
   }
-  return {engine:'trivy',name:'Trivy Repository',status:result.code===0||findings.length?'completed':'completed_with_gaps',startedAt,completedAt:new Date().toISOString(),findings,metrics:{findings:findings.length},stderr:result.code&& !findings.length?result.stderr.slice(0,1200):undefined};
+  return {engine:'trivy',name:'Trivy Repository',status:result.code===0?'completed':'completed_with_gaps',startedAt,completedAt:new Date().toISOString(),findings,metrics:{findings:findings.length},stderr:result.code&& !findings.length?result.stderr.slice(0,1200):undefined};
 }
 
 async function runGitleaks(target){
@@ -306,7 +308,7 @@ async function runNaabu(target){
   return {
     engine:'naabu',
     name:'Naabu Port Discovery',
-    status:result.code===0||findings.length?'completed':'completed_with_gaps',
+    status:result.code===0?'completed':'completed_with_gaps',
     startedAt,
     completedAt:new Date().toISOString(),
     findings,
@@ -357,6 +359,7 @@ async function execute(body){
   throw new Error('Unsupported engine.');
 }
 
+let zapBusy=false;
 const server=http.createServer(async(req,res)=>{
   if(req.method==='GET'&&req.url==='/health'){
     return json(res,200,{
@@ -380,7 +383,10 @@ const server=http.createServer(async(req,res)=>{
     if(!verifySignature(req,raw)) return json(res,401,{error:'Invalid worker signature.'});
     try{
       const body=JSON.parse(raw||'{}');
-      const result=await execute(body);
+      if(body.engine==='zap'&&zapBusy)return json(res,429,{error:'ZAP is busy; retry this scan later.'});
+      if(body.engine==='zap')zapBusy=true;
+      let result;
+      try{result=await execute(body);}finally{if(body.engine==='zap')zapBusy=false;}
       return json(res,200,{jobId:body.jobId||null,...result});
     }catch(error){
       return json(res,400,{error:error?.message||'Scanner worker failed.'});
@@ -388,4 +394,5 @@ const server=http.createServer(async(req,res)=>{
   });
 });
 
-server.listen(PORT,'0.0.0.0',()=>console.log('Inspector scanner worker listening on '+PORT));
+server.listen(PORT,'::',()=>console.log('Inspector scanner worker listening on '+PORT));
+

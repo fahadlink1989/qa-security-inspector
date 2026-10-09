@@ -1,3 +1,19 @@
+# Backend foundation update — 2026-10-09
+
+The historical audit below records the pre-migration implementation. The four backend blockers are now implemented on the durable-backend release:
+
+| Requirement | Implementation | Verification |
+|---|---|---|
+| Transactional storage | Neon PostgreSQL; workspace row locks and revisions; SQL users/sessions/jobs | 12 concurrent target updates preserved |
+| Workspace authentication | Salted scrypt, expiring hashed sessions, workspace membership scope, viewer permissions, Origin checks | Two-account isolation, cross-tenant mutations, CSRF rejection, logout revocation |
+| Durable jobs | Persistent encrypted queue, SKIP LOCKED claims, leases, heartbeats, retries, stable result IDs | Expired job recovery, concurrent claims, retry exhaustion and credential erasure |
+| Scanner workers | Railway backend/consumer, separate engine container, private ZAP daemon | Real ZAP scan + persisted report; pinned binaries and reviewed Nuclei templates |
+| Scheduling | Authorized per-target UTC slots, durable deduplication | Repeated schedule ticks enqueue once |
+
+See BACKEND_FOUNDATION.md for infrastructure, operating instructions, and remaining commercial account/network features.
+
+---
+
 # Inspector functionality audit — 2026-10-09
 
 Compared the six supplied HostedScan screenshots with main at 9e04799.

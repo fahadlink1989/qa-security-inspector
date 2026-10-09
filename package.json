@@ -8,17 +8,18 @@
     "start": "next start"
   },
   "dependencies": {
-    "next": "16.4.0",
-    "react": "19.1.1",
-    "react-dom": "19.1.1",
-    "@vercel/blob": "latest",
-    "cheerio": "1.1.2",
-    "pdf-lib": "1.17.1",
-    "playwright-core": "latest",
-    "@sparticuz/chromium": "latest",
-    "ai": "7.0.130",
-    "@axe-core/playwright": "4.13.0",
     "@ai-sdk/openai": "latest",
-    "@vercel/functions": "latest"
+    "@axe-core/playwright": "4.13.0",
+    "@sparticuz/chromium": "latest",
+    "@vercel/blob": "latest",
+    "@vercel/functions": "latest",
+    "ai": "7.0.130",
+    "cheerio": "1.1.2",
+    "next": "16.4.0",
+    "pdf-lib": "1.17.1",
+    "pg": "^8.23.1",
+    "playwright-core": "latest",
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
   }
 }

@@ -1,10 +1,16 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
-  // Keep only the native Chromium payload external. Playwright and axe stay
-  // bundled so their JS runtime can be traced correctly by Next.js 16.
+  async rewrites() {
+    return {beforeFiles:process.env.INSPECTOR_BACKEND==='1'?[]:[{source:'/api/:path*',destination:'https://inspector-backend-production-f6e0.up.railway.app/api/:path*'}]};
+  },
+  // Browser libraries serialize functions for injection. Keep them external so
+  // bundler minification cannot introduce out-of-scope browser identifiers.
   serverExternalPackages: [
-    '@sparticuz/chromium'
+    '@sparticuz/chromium',
+    '@axe-core/playwright',
+    'axe-core',
+    'playwright-core'
   ],
   outputFileTracingIncludes: {
     '/**': [
@@ -19,3 +25,4 @@ const nextConfig = {
 };
 
 export default nextConfig;
+

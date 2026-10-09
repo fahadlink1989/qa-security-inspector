@@ -71,6 +71,7 @@ export default function Home(){
         fetch('/api/workspace',{cache:'no-store'}),
         fetch('/api/engine-status',{cache:'no-store'}).catch(()=>null)
       ]);
+      if(response.status===401){window.location.assign('/login');return;}
       const json=await response.json();
       if(!response.ok) throw new Error(json.error||'Could not load workspace.');
       setData(json);
@@ -78,7 +79,7 @@ export default function Home(){
       const id=preferredProjectId || selectedProjectId || json.projects?.[0]?.id || '';
       setSelectedProjectId(id);
       const p=json.projects?.find(x=>x.id===id);
-      if(p){
+      if(p&&!silent){
         setSettings({name:p.name,schedule:p.schedule||'manual',scheduledMode:p.scheduledMode||'standard',webhookUrl:''});
         setNewScan(prev=>({
           ...prev,
@@ -97,6 +98,7 @@ export default function Home(){
     }catch{}
   },[]);
 
+  const networkWorkerReady=Boolean(engineStatus?.worker?.connected&&engineStatus?.worker?.health?.allowPrivateTargets);
   const project=useMemo(()=>data.projects.find(p=>p.id===selectedProjectId)||null,[data.projects,selectedProjectId]);
   const scans=useMemo(()=>(data.scans||[]).filter(s=>s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId]);
   const latestScan=useMemo(()=>scans[0]||null,[scans]);
@@ -108,8 +110,8 @@ export default function Home(){
   );
 
   useEffect(()=>{
-    if(!activeJobs.length||!selectedProjectId) return;
-    const timer=setInterval(()=>load(selectedProjectId,true),2500);
+    if(!selectedProjectId) return;
+    const timer=setInterval(()=>load(selectedProjectId,true),activeJobs.length?2500:15000);
     return ()=>clearInterval(timer);
   },[activeJobs.length,selectedProjectId]);
 
@@ -247,7 +249,7 @@ export default function Home(){
     event.preventDefault();
     if(!project) return;
     try{
-      const patch={name:settings.name,schedule:settings.schedule,scheduledMode:settings.scheduledMode};
+      const patch={name:settings.name,schedule:settings.schedule,scheduledMode:settings.scheduledMode,scheduleAuthorized:settings.scheduleAuthorized===true};
       if(settings.webhookUrl) patch.webhookUrl=settings.webhookUrl;
       await workspaceAction({action:'update_project',projectId:project.id,patch});
       setSettings(prev=>({...prev,webhookUrl:''}));
@@ -322,9 +324,8 @@ export default function Home(){
     try{
       const result=await workspaceAction({action:'retest_finding',scanId:selectedRisk._scanId,fingerprint:selectedRisk.fingerprint});
       await load(project.id);
-      setNotice(result.status==='inconclusive'?'Retest inconclusive — scanner coverage was incomplete. The risk remains unchanged.':result.status==='resolved'?'Retest passed — this risk is no longer present.':'Retest completed — the risk is still present.');
-      if(result.currentFinding) setSelectedRisk({...result.currentFinding,_scanId:result.scan.id,_scan:result.scan});
-      else setSelectedRisk(null);
+      setNotice('Retest queued. Follow its progress in Scans; the risk status updates after verification.');
+      setSelectedRisk(null);setView('scans');
     }catch(error){setNotice(error.message);}
     finally{setRetesting(false);}
   }
@@ -512,6 +513,11 @@ export default function Home(){
                   <span>{fmt(job.createdAt)}</span>
                   <span className="pendingText">Scanning…</span>
                 </div>)}
+                {(data.jobs||[]).filter(job=>job.projectId===selectedProjectId&&job.status==='failed'&&!scanRows.some(scan=>scan.id===job.scanId)).map(job=><div className="tableRow scanGrid" key={job.id}>
+                  <div><strong>{job.scanType}</strong><small>{job.error||'Scan failed'}</small></div><span>{job.target}</span>
+                  <Badge tone="danger">Failed after {job.attempts||1} attempt(s)</Badge><span>{fmt(job.completedAt)}</span>
+                  <button className="secondaryBtn" onClick={()=>openNewScan(job.assetId)}>New scan</button>
+                </div>)}
                 {scanRows.map(scan=><div className="tableRow scanGrid" key={scan.id}>
                   <div className="targetName"><span className="expand">›</span><div><strong>{scanLabel(scan)}</strong><small>{scan.trigger||scan._kind||'manual'}</small>{scan.engineRuns?.length?<div className="engineChips">{scan.engineRuns.map(run=><span key={run.engine} className={'engineChip '+run.status}>{run.name||run.engine} · {run.status}</span>)}</div>:null}</div></div>
                   <span>{scan.finalUrl||scan.url||scan.target||scan.repository?.url||'Repository scan'}</span>
@@ -519,7 +525,7 @@ export default function Home(){
                   <span>{fmt(scan.completedAt||scan.startedAt)}</span>
                   <div className="riskDots"><span className="dot critical"/>{scan.summary?.critical||0}<span className="dot high"/>{scan.summary?.high||0}<span className="dot medium"/>{scan.summary?.medium||0}<span className="dot low"/>{scan.summary?.low||0}</div>
                 </div>)}
-                {!scanRows.length?<div className="emptyRow">No scans yet.</div>:null}
+                {!scanRows.length?<div className="emptyRow">No completed scan results yet.</div>:null}
               </div>
             ):(
               <div className="dataCard scheduledCard">
@@ -587,13 +593,13 @@ export default function Home(){
             <header className="pageHeader">
               <div><h1>Internal Networks</h1><p>Scan private RFC1918 networks from a worker deployed where those networks are reachable.</p></div>
               <div className="headerActions">
-              <Badge tone={engineStatus?.worker?.connected?'success':'warning'}>{engineStatus?.worker?.connected?'Scanner worker connected':'Worker connection required'}</Badge>
+              <Badge tone={networkWorkerReady?'success':'warning'}>{networkWorkerReady?'Scanner worker connected':'Worker connection required'}</Badge>
               </div>
             </header>
 
             {!project?<div className="emptyState">Select a workspace first.</div>:(
               <>
-                {!engineStatus?.worker?.connected?(
+                {!networkWorkerReady?(
                   <div className="networkCallout">
                     <div><strong>Connect an internal scanner worker</strong><span>Private targets are never routed through the public Vercel control plane. Deploy the Inspector scanner worker inside your VPC/network, enable private targets there, and connect it in Settings.</span></div>
                     <button className="secondaryBtn" onClick={()=>setView('settings')}>View scanner setup</button>
@@ -612,8 +618,8 @@ export default function Home(){
                   <section className="settingsCard">
                     <h2>How internal scanning works</h2>
                     <div className="engineRows compact">
-                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Available':'Offline'}</Badge></div>
-                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={engineStatus?.worker?.connected?'blue':'neutral'}>{engineStatus?.worker?.connected?'Worker route':'Offline'}</Badge></div>
+                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={networkWorkerReady?'success':'neutral'}>{networkWorkerReady?'Available':'Offline'}</Badge></div>
+                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={networkWorkerReady?'blue':'neutral'}>{networkWorkerReady&&engineStatus?.worker?.health?.engines?.openvas?'Available':'Unavailable'}</Badge></div>
                     </div>
                     <label className="authConfirm networkAuth"><input type="checkbox" checked={networkAuthorized} onChange={e=>setNetworkAuthorized(e.target.checked)}/><span><strong>Authorization confirmed</strong><small>I own these private networks or have explicit permission to scan them.</small></span></label>
                   </section>
@@ -631,7 +637,7 @@ export default function Home(){
                       <span>{last?fmt(last.completedAt):'Never'}</span>
                       <span>{last?.metrics?.openPorts??'—'}</span>
                       <div className="engineMini"><Badge tone={naabu?.status==='completed'?'success':'neutral'}>Naabu {naabu?.status||'not run'}</Badge><Badge tone={openvas?.status==='completed'?'success':openvas?.status==='failed'?'warning':'neutral'}>OpenVAS {openvas?.status||'not run'}</Badge></div>
-                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!engineStatus?.worker?.connected} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
+                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!networkWorkerReady} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
                     </div>;
                   })}
                   {!project.networks?.length?<div className="emptyRow">No internal networks registered yet.</div>:null}
@@ -643,7 +649,7 @@ export default function Home(){
 
         {view==='settings'?(
           <section className="page">
-            <header className="pageHeader"><div><h1>Settings</h1><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
+            <header className="pageHeader"><div><h1>Settings</h1><p>Storage: {engineStatus?.orchestration?.storage||'checking'} · Scan consumer: {engineStatus?.orchestration?.consumerHealthy?'connected':'checking / unavailable'}</p><button className="secondaryBtn" onClick={async()=>{await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'logout'})});window.location.assign('/login');}}>Sign out</button><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
             {!project?<div className="emptyState">Select a workspace first.</div>:(
               <div className="settingsGrid">
                 <form className="settingsCard" onSubmit={saveSettings}>
@@ -652,7 +658,7 @@ export default function Home(){
                   <label>Monitoring schedule<select value={settings.schedule} onChange={e=>setSettings({...settings,schedule:e.target.value})}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
                   <label>Scheduled scan profile<select value={settings.scheduledMode} onChange={e=>setSettings({...settings,scheduledMode:e.target.value})}><option value="standard">Web App Scan</option><option value="deep">Attack Surface Scan</option></select></label>
                   <label>Alert webhook<input type="url" placeholder={project.webhookUrl?'Webhook configured — enter a new URL to replace':'https://hooks.slack.com/...'} value={settings.webhookUrl} onChange={e=>setSettings({...settings,webhookUrl:e.target.value})}/></label>
-                  <button className="primaryBtn">Save settings</button>
+                  <label><input type="checkbox" checked={settings.scheduleAuthorized||false} onChange={e=>setSettings({...settings,scheduleAuthorized:e.target.checked})}/> I authorize recurring non-destructive scans of this project’s active targets.</label><button className="primaryBtn">Save settings</button>
                 </form>
 
                 <section className="settingsCard">

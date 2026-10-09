@@ -1,0 +1,24 @@
+id: inspector-missing-csp
+info:
+  name: Content Security Policy header not observed
+  author: inspector
+  severity: low
+  description: The HTML response does not advertise a Content-Security-Policy header.
+  remediation: Assess a Content Security Policy appropriate for the application and deploy it after report-only testing.
+  tags: misconfig,passive
+http:
+  - method: GET
+    path: ["{{BaseURL}}/"]
+    redirects: false
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        part: header
+        words: ["text/html"]
+      - type: word
+        part: header
+        words: ["content-security-policy:"]
+        case-insensitive: true
+        negative: true

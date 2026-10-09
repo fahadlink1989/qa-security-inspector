@@ -1,11 +1,15 @@
+import { database } from '../../../lib/backend/db';
+import { withWorkspace } from '../../../lib/backend/auth';
 import { scannerWorkerHealth } from '../../../lib/workerClient';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 
-export async function GET(){
+async function handleGET(){
   const worker=await scannerWorkerHealth();
+  const heartbeat=await database().query("SELECT last_seen, last_seen>now()-interval '90 seconds' AS healthy FROM inspector_worker_heartbeats WHERE id='consumer'");
   return Response.json({
+    orchestration:{storage:'postgres',durableQueue:true,consumerHealthy:Boolean(heartbeat.rows[0]?.healthy),lastHeartbeat:heartbeat.rows[0]?.last_seen||null},
     builtIn:[
       {id:'playwright',name:'Playwright',purpose:'Rendered browser QA',status:'available'},
       {id:'axe',name:'axe-core',purpose:'Accessibility analysis',status:'available'},
@@ -25,3 +29,5 @@ export async function GET(){
   },{headers:{'cache-control':'no-store'}});
 }
 
+
+export const GET=withWorkspace(handleGET);

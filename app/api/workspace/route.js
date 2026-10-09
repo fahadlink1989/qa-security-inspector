@@ -1,3 +1,4 @@
+import { withWorkspace } from '../../../lib/backend/auth';
 import { applyWorkflow } from '../../../lib/riskModel.mjs';
 import crypto from 'node:crypto';
 import net from 'node:net';
@@ -59,7 +60,11 @@ async function updateProject(projectId, patch) {
     const project = state.projects.find((item) => item.id === projectId);
     if (!project) throw new Error('Project not found.');
     if (typeof patch.name === 'string' && patch.name.trim()) project.name = patch.name.trim();
-    if (['manual','daily','weekly'].includes(patch.schedule)) project.schedule = patch.schedule;
+    if (['manual','daily','weekly'].includes(patch.schedule)) {
+      if(patch.schedule!=='manual'&&patch.scheduleAuthorized!==true&&!project.scheduleAuthorizedAt) throw new Error('Confirm authorization for recurring scans.');
+      project.schedule=patch.schedule;
+      project.scheduleAuthorizedAt=patch.schedule==='manual'?null:(project.scheduleAuthorizedAt||new Date().toISOString());
+    }
     if (['standard','deep'].includes(patch.scheduledMode)) project.scheduledMode = patch.scheduledMode;
     if (typeof patch.description === 'string') project.description = patch.description.slice(0,500);
     if (typeof patch.webhookUrl === 'string') project.webhookUrl = patch.webhookUrl.trim();
@@ -233,7 +238,7 @@ async function updateCodeFindingStatus(projectId, scanId, fingerprint, status) {
   return changed;
 }
 
-export async function GET() {
+async function handleGET() {
   try {
     const data = await getWorkspaceView();
     return Response.json(data, { headers: { 'cache-control': 'no-store' } });
@@ -242,7 +247,7 @@ export async function GET() {
   }
 }
 
-export async function POST(request) {
+async function handlePOST(request) {
   try {
     const body = await request.json();
     let result;
@@ -265,8 +270,11 @@ export async function POST(request) {
     } else if (body.action === 'finding_status') {
       result = await updateFindingStatus(body.scanId, body.fingerprint, body.status);
     } else if (body.action === 'retest_finding') {
-      const { retestFinding } = await import('../../../lib/scanService');
-      result = await retestFinding(body.scanId, body.fingerprint);
+      const { enqueueJob } = await import('../../../lib/backend/queue');
+      const state=await readState();
+      const scan=state.scans.find(s=>s.id===body.scanId);
+      if(!scan?.findings.some(f=>f.fingerprint===body.fingerprint)) throw new Error('Finding not found.');
+      result=await enqueueJob({type:'retest',scanType:'Retest',projectId:scan.projectId,assetId:scan.assetId,target:scan.url}, {scanId:body.scanId,fingerprint:body.fingerprint});
     } else if (body.action === 'network_finding_status') {
       result = await updateNetworkFindingStatus(
         body.projectId,
@@ -291,3 +299,7 @@ export async function POST(request) {
   }
 }
 
+
+export const GET=withWorkspace(handleGET);
+
+export const POST=withWorkspace(handlePOST);

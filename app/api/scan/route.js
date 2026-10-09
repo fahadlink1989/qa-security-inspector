@@ -1,52 +1,22 @@
-import { waitUntil } from '@vercel/functions';
-import { createScanJob, executeScanJob, getScanJob } from '../../../lib/jobs';
-
-export const runtime = 'nodejs';
-export const dynamic = 'force-dynamic';
-export const maxDuration = 300;
-
-export async function GET(request) {
+import { withWorkspace } from '../../../lib/backend/auth';
+import { enqueueJob, getJob } from '../../../lib/backend/queue';
+import { readState } from '../../../lib/store';
+export const runtime='nodejs';
+export const dynamic='force-dynamic';
+export const GET=withWorkspace(async request=>{
+  const job=await getJob(new URL(request.url).searchParams.get('jobId'));
+  return Response.json(job||{error:'Scan job not found.'},{status:job?200:404,headers:{'cache-control':'no-store'}});
+});
+export const POST=withWorkspace(async request=>{
   try {
-    const jobId = new URL(request.url).searchParams.get('jobId');
-    if (!jobId) return Response.json({ error:'jobId is required.' }, { status:400 });
-    const job = await getScanJob(jobId);
-    if (!job) return Response.json({ error:'Scan job not found.' }, { status:404 });
-    return Response.json(job, { headers:{'cache-control':'no-store'} });
-  } catch (error) {
-    return Response.json({ error:error?.message || 'Could not read scan job.' }, { status:400 });
-  }
-}
-
-export async function POST(request) {
-  try {
-    const body = await request.json();
-
-    if (body.authorized !== true) {
-      return Response.json({ error: 'Authorization confirmation is required.' }, { status: 400 });
-    }
-    if (!body.projectId || !body.assetId) {
-      return Response.json({ error: 'Project and asset are required.' }, { status: 400 });
-    }
-
-    const mode = body.mode === 'deep' ? 'deep' : 'standard';
-    const job = await createScanJob({
-      projectId:body.projectId,
-      assetId:body.assetId,
-      trigger:body.trigger || 'manual',
-      mode
-    });
-
-    waitUntil(
-      executeScanJob(job.id).catch((error)=>{
-        console.error('background scan job failed', error);
-      })
-    );
-
-    return Response.json(job, {
-      status:202,
-      headers:{'cache-control':'no-store'}
-    });
-  } catch (error) {
-    return Response.json({ error: error.message || 'Scan failed.' }, { status: 400 });
-  }
-}
+    const body=await request.json();
+    if(body.authorized!==true) throw new Error('Authorization confirmation is required.');
+    const state=await readState(),project=state.projects.find(p=>p.id===body.projectId);
+    const asset=project?.assets.find(a=>a.id===body.assetId&&a.status==='active');
+    if(!asset) throw new Error('Active target not found.');
+    const mode=body.mode==='deep'?'deep':'standard';
+    const job=await enqueueJob({type:'web-scan',projectId:project.id,assetId:asset.id,target:asset.url,mode,
+      scanType:mode==='deep'?'Attack Surface Scan':'Web App Scan'},{});
+    return Response.json(job,{status:202});
+  }catch(error){return Response.json({error:error.message},{status:400});}
+});

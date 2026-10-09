@@ -1,0 +1,21 @@
+id: inspector-git-config-exposure
+info:
+  name: Exposed Git repository configuration
+  author: inspector
+  severity: medium
+  description: A public HTTP response contains Git repository configuration.
+  remediation: Deny web access to .git directories and remove repository metadata from deployed artifacts.
+  tags: exposure,passive
+http:
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/config"
+    redirects: false
+    matchers-condition: and
+    matchers:
+      - type: status
+        status: [200]
+      - type: word
+        part: body
+        words: ["[core]", "repositoryformatversion"]
+        condition: and
