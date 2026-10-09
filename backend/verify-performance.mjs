@@ -21,6 +21,7 @@ export async function verifyPerformance(base){
     const testKey=crypto.randomBytes(30).toString('base64url');assert.equal((await post({action:'configure',key:testKey})).status(),200);
     state=await read();assert.equal(state.workspace.performanceKeyConfigured,true);assert.equal(state.workspace.performanceKey,undefined);assert.ok(!JSON.stringify(state).includes(testKey),'API key must not be exposed');
     assert.equal((await post({action:'configure',key:''})).status(),200);
+    await page.reload({waitUntil:'networkidle'});await page.locator('nav').getByRole('button',{name:/Targets/}).click();
     await page.getByRole('button',{name:'Speed',exact:true}).click();const panel=page.getByRole('dialog',{name:'Website performance'});await panel.waitFor();assert.equal(await panel.getByRole('button',{name:'Measure mobile & desktop'}).isDisabled(),true);
     await panel.getByRole('checkbox').check();await panel.getByRole('button',{name:'Measure mobile & desktop'}).click();
     let run;
