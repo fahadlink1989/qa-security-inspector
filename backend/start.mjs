@@ -29,3 +29,5 @@ if(process.env.VERIFY_BACKEND==='1') {
 }
 consume();schedule();
 if(process.env.VERIFY_UI_URL){try{await (await import('./verify-ui.mjs')).verifyUI(process.env.VERIFY_UI_URL);}catch(error){console.error('BROWSER_VERIFICATION_FAILED',error.message);}}
+
+if(process.env.VERIFY_PERFORMANCE_URL){try{await (await import('./verify-performance.mjs')).verifyPerformance(process.env.VERIFY_PERFORMANCE_URL);}catch(error){console.error('PERFORMANCE_QA_FAILED',error.message);}}

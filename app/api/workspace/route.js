@@ -40,6 +40,8 @@ async function getWorkspaceView() {
     workspaces:memberships.rows,
     workspace: {
       ...state.workspace,
+      performanceKey:undefined,
+      performanceKeyConfigured:Boolean(state.workspace.performanceKey||process.env.PAGESPEED_API_KEY),
       webhookUrl: state.workspace.webhookUrl ? 'configured' : ''
     },
     projects,
