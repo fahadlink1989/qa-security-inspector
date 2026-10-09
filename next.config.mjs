@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   poweredByHeader: false,
+  async rewrites() {
+    return {beforeFiles:process.env.INSPECTOR_BACKEND==='1'?[]:[{source:'/api/:path*',destination:'https://inspector-backend-production-f6e0.up.railway.app/api/:path*'}]};
+  },
   // Keep only the native Chromium payload external. Playwright and axe stay
   // bundled so their JS runtime can be traced correctly by Next.js 16.
   serverExternalPackages: [
@@ -19,3 +22,4 @@ const nextConfig = {
 };
 
 export default nextConfig;
+

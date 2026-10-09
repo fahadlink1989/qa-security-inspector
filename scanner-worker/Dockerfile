@@ -4,7 +4,7 @@ ENV NODE_ENV=production
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates curl git jq unzip tar \
+    ca-certificates curl git jq unzip tar libpcap0.8 \
   && rm -rf /var/lib/apt/lists/*
 
 # Install pinned-by-build open-source scanner binaries from official GitHub releases.
@@ -38,10 +38,11 @@ RUN set -eux; \
 COPY package.json ./
 COPY server.js ./
 
-# Cache the community nuclei templates into the image. A production image should
-# be rebuilt on a controlled cadence to update this content.
-RUN nuclei -update-templates -silent || true
+# Only reviewed read-only templates are shipped; broad community templates are not run automatically.
+COPY templates /app/templates
+ENV NUCLEI_TEMPLATES=/app/templates
 
 USER node
 EXPOSE 8080
 CMD ["node","server.js"]
+

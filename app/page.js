@@ -71,6 +71,7 @@ export default function Home(){
         fetch('/api/workspace',{cache:'no-store'}),
         fetch('/api/engine-status',{cache:'no-store'}).catch(()=>null)
       ]);
+      if(response.status===401){window.location.assign('/login');return;}
       const json=await response.json();
       if(!response.ok) throw new Error(json.error||'Could not load workspace.');
       setData(json);
@@ -247,7 +248,7 @@ export default function Home(){
     event.preventDefault();
     if(!project) return;
     try{
-      const patch={name:settings.name,schedule:settings.schedule,scheduledMode:settings.scheduledMode};
+      const patch={name:settings.name,schedule:settings.schedule,scheduledMode:settings.scheduledMode,scheduleAuthorized:settings.scheduleAuthorized===true};
       if(settings.webhookUrl) patch.webhookUrl=settings.webhookUrl;
       await workspaceAction({action:'update_project',projectId:project.id,patch});
       setSettings(prev=>({...prev,webhookUrl:''}));
@@ -322,9 +323,8 @@ export default function Home(){
     try{
       const result=await workspaceAction({action:'retest_finding',scanId:selectedRisk._scanId,fingerprint:selectedRisk.fingerprint});
       await load(project.id);
-      setNotice(result.status==='inconclusive'?'Retest inconclusive — scanner coverage was incomplete. The risk remains unchanged.':result.status==='resolved'?'Retest passed — this risk is no longer present.':'Retest completed — the risk is still present.');
-      if(result.currentFinding) setSelectedRisk({...result.currentFinding,_scanId:result.scan.id,_scan:result.scan});
-      else setSelectedRisk(null);
+      setNotice('Retest queued. Follow its progress in Scans; the risk status updates after verification.');
+      setSelectedRisk(null);setView('scans');
     }catch(error){setNotice(error.message);}
     finally{setRetesting(false);}
   }
@@ -643,7 +643,7 @@ export default function Home(){
 
         {view==='settings'?(
           <section className="page">
-            <header className="pageHeader"><div><h1>Settings</h1><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
+            <header className="pageHeader"><div><h1>Settings</h1><button className="secondaryBtn" onClick={async()=>{await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'logout'})});window.location.assign('/login');}}>Sign out</button><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
             {!project?<div className="emptyState">Select a workspace first.</div>:(
               <div className="settingsGrid">
                 <form className="settingsCard" onSubmit={saveSettings}>
@@ -652,7 +652,7 @@ export default function Home(){
                   <label>Monitoring schedule<select value={settings.schedule} onChange={e=>setSettings({...settings,schedule:e.target.value})}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
                   <label>Scheduled scan profile<select value={settings.scheduledMode} onChange={e=>setSettings({...settings,scheduledMode:e.target.value})}><option value="standard">Web App Scan</option><option value="deep">Attack Surface Scan</option></select></label>
                   <label>Alert webhook<input type="url" placeholder={project.webhookUrl?'Webhook configured — enter a new URL to replace':'https://hooks.slack.com/...'} value={settings.webhookUrl} onChange={e=>setSettings({...settings,webhookUrl:e.target.value})}/></label>
-                  <button className="primaryBtn">Save settings</button>
+                  <label><input type="checkbox" checked={settings.scheduleAuthorized||false} onChange={e=>setSettings({...settings,scheduleAuthorized:e.target.checked})}/> I authorize recurring non-destructive scans of this project’s active targets.</label><button className="primaryBtn">Save settings</button>
                 </form>
 
                 <section className="settingsCard">

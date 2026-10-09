@@ -1,3 +1,4 @@
+import { withWorkspace } from '../../../lib/backend/auth';
 import { currentRiskRows } from '../../../lib/riskModel.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { latestScanForProject, readState } from '../../../lib/store';
@@ -60,7 +61,7 @@ function summarize(findings){
   return out;
 }
 
-export async function GET(request){
+async function handleGET(request){
   try{
     const url=new URL(request.url);
     const projectId=url.searchParams.get('projectId');
@@ -176,3 +177,5 @@ export async function GET(request){
   }
 }
 
+
+export const GET=withWorkspace(handleGET);

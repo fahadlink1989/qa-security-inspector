@@ -1,9 +1,10 @@
+import { withWorkspace } from '../../../lib/backend/auth';
 import { scannerWorkerHealth } from '../../../lib/workerClient';
 
 export const runtime='nodejs';
 export const dynamic='force-dynamic';
 
-export async function GET(){
+async function handleGET(){
   const worker=await scannerWorkerHealth();
   return Response.json({
     builtIn:[
@@ -25,3 +26,5 @@ export async function GET(){
   },{headers:{'cache-control':'no-store'}});
 }
 
+
+export const GET=withWorkspace(handleGET);
