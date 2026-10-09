@@ -1,3 +1,5 @@
+import { database } from '../../../lib/backend/db';
+import { workspaceContext } from '../../../lib/backend/context';
 import { withWorkspace } from '../../../lib/backend/auth';
 import { applyWorkflow } from '../../../lib/riskModel.mjs';
 import crypto from 'node:crypto';
@@ -17,6 +19,7 @@ function publicProject(project) {
 
 async function getWorkspaceView() {
   const state = await readState();
+  const memberships=await database().query('SELECT w.id,w.name,m.role FROM inspector_memberships m JOIN inspector_workspaces w ON w.id=m.workspace_id WHERE m.user_id=$1 ORDER BY w.created_at',[workspaceContext().userId]);
   const projects = state.projects.map((project) => {
     const latest = latestScanForProject(state, project.id);
     return {
@@ -34,6 +37,7 @@ async function getWorkspaceView() {
 
   return {
     version: state.version,
+    workspaces:memberships.rows,
     workspace: {
       ...state.workspace,
       webhookUrl: state.workspace.webhookUrl ? 'configured' : ''
