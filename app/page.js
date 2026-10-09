@@ -196,6 +196,8 @@ export default function Home(){
     const response=await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
     const result=await response.json();if(!response.ok)throw new Error(result.error);
     setSelectedProjectId('');setSelectedRisk(null);setNewScanOpen(false);setAddTargetOpen(false);
+    setTargetUrl('');setTargetLabel('');setEditTargetId('');setScanAfterTarget(false);
+    setNewScan(prev=>({...prev,assetId:'',networkTargetId:'',credential:'',repositoryToken:'',authorized:false}));
     setView('dashboard');await load('');
     }finally{workspaceSwitching.current=false;}
   }
