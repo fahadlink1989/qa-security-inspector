@@ -65,6 +65,13 @@ export async function verifyBackend(base) {
       check(report.status===200,'report export reads persisted scan');
       const saved=(await request('/api/workspace',null,a.cookie)).data.scans.find(s=>s.id===scan.data.id);
       check(saved?.engineRuns?.some(e=>e.engine==='zap'&&e.status==='completed'),'ZAP produces real results');
+      const engineBody=JSON.stringify({version:1,jobId:crypto.randomUUID(),engine:'nuclei',profile:'safe',target:'https://qa-security-inspector.vercel.app'});
+      const timestamp=String(Date.now());
+      const signature=crypto.createHmac('sha256',process.env.SCANNER_WORKER_SECRET).update(timestamp+'.'+engineBody).digest('hex');
+      const engineResponse=await fetch(new URL('/v1/scan',process.env.SCANNER_WORKER_URL),{method:'POST',headers:{'content-type':'application/json','x-inspector-timestamp':timestamp,'x-inspector-signature':signature},body:engineBody});
+      const engineResult=await engineResponse.json();
+      check(engineResponse.ok&&engineResult.status==='completed','Nuclei reviewed templates execute successfully');
+      console.log('NUCLEI_VERIFICATION_PASS',engineResult.findings?.length||0,'findings');
       console.log('BACKEND_REAL_SCAN',JSON.stringify({status:completed.status,findings:completed.findings,coverageGaps:saved.coverageGaps,browserErrors:saved.evidence?.browser?.pages?.map(p=>({error:p.error,axeError:p.axeError})),engines:saved.engineRuns.map(e=>({engine:e.engine,status:e.status}))}));
     }
     await request('/api/account',{action:'logout'},a.cookie);

@@ -31,3 +31,7 @@ Private network scans remain disabled on this public deployment. OpenVAS needs a
 Secrets: DATABASE_URL, JOB_ENCRYPTION_KEY (32 random bytes, base64), INTERNAL_WORKER_SECRET, SCANNER_WORKER_SECRET and ZAP_API_KEY. Rotate encryption keys only after draining encrypted pending jobs or implement key versioning first.
 
 Remaining commercial account features: verified email delivery/password recovery, invitations, account MFA/SSO, billing quotas, and richer audit administration. They are not represented as implemented.
+
+## Verified release evidence
+
+On the deployed backend, 29 integration checks passed. An actual authorized scan of Inspector completed with no coverage gaps: Inspector core, Playwright, axe accessibility and ZAP succeeded. Headless Chromium also verified registration, private dashboard load, logout and login through the deployed frontend. The build externalizes browser libraries to prevent minification from corrupting axe’s injected functions.

@@ -98,6 +98,7 @@ export default function Home(){
     }catch{}
   },[]);
 
+  const networkWorkerReady=Boolean(engineStatus?.worker?.connected&&engineStatus?.worker?.health?.allowPrivateTargets);
   const project=useMemo(()=>data.projects.find(p=>p.id===selectedProjectId)||null,[data.projects,selectedProjectId]);
   const scans=useMemo(()=>(data.scans||[]).filter(s=>s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId]);
   const latestScan=useMemo(()=>scans[0]||null,[scans]);
@@ -524,7 +525,7 @@ export default function Home(){
                   <span>{fmt(scan.completedAt||scan.startedAt)}</span>
                   <div className="riskDots"><span className="dot critical"/>{scan.summary?.critical||0}<span className="dot high"/>{scan.summary?.high||0}<span className="dot medium"/>{scan.summary?.medium||0}<span className="dot low"/>{scan.summary?.low||0}</div>
                 </div>)}
-                {!scanRows.length?<div className="emptyRow">No scans yet.</div>:null}
+                {!scanRows.length?<div className="emptyRow">No completed scan results yet.</div>:null}
               </div>
             ):(
               <div className="dataCard scheduledCard">
@@ -592,13 +593,13 @@ export default function Home(){
             <header className="pageHeader">
               <div><h1>Internal Networks</h1><p>Scan private RFC1918 networks from a worker deployed where those networks are reachable.</p></div>
               <div className="headerActions">
-              <Badge tone={engineStatus?.worker?.connected?'success':'warning'}>{engineStatus?.worker?.connected?'Scanner worker connected':'Worker connection required'}</Badge>
+              <Badge tone={networkWorkerReady?'success':'warning'}>{networkWorkerReady?'Scanner worker connected':'Worker connection required'}</Badge>
               </div>
             </header>
 
             {!project?<div className="emptyState">Select a workspace first.</div>:(
               <>
-                {!engineStatus?.worker?.connected?(
+                {!networkWorkerReady?(
                   <div className="networkCallout">
                     <div><strong>Connect an internal scanner worker</strong><span>Private targets are never routed through the public Vercel control plane. Deploy the Inspector scanner worker inside your VPC/network, enable private targets there, and connect it in Settings.</span></div>
                     <button className="secondaryBtn" onClick={()=>setView('settings')}>View scanner setup</button>
@@ -617,8 +618,8 @@ export default function Home(){
                   <section className="settingsCard">
                     <h2>How internal scanning works</h2>
                     <div className="engineRows compact">
-                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Available':'Offline'}</Badge></div>
-                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={engineStatus?.worker?.connected?'blue':'neutral'}>{engineStatus?.worker?.connected?'Worker route':'Offline'}</Badge></div>
+                      <div><strong>Naabu</strong><span>Rate-limited TCP CONNECT discovery across the top 100 ports.</span><Badge tone={networkWorkerReady?'success':'neutral'}>{networkWorkerReady?'Available':'Offline'}</Badge></div>
+                      <div><strong>Greenbone / OpenVAS</strong><span>Deeper network vulnerability assessment when the Greenbone adapter is configured.</span><Badge tone={networkWorkerReady?'blue':'neutral'}>{networkWorkerReady&&engineStatus?.worker?.health?.engines?.openvas?'Available':'Unavailable'}</Badge></div>
                     </div>
                     <label className="authConfirm networkAuth"><input type="checkbox" checked={networkAuthorized} onChange={e=>setNetworkAuthorized(e.target.checked)}/><span><strong>Authorization confirmed</strong><small>I own these private networks or have explicit permission to scan them.</small></span></label>
                   </section>
@@ -636,7 +637,7 @@ export default function Home(){
                       <span>{last?fmt(last.completedAt):'Never'}</span>
                       <span>{last?.metrics?.openPorts??'—'}</span>
                       <div className="engineMini"><Badge tone={naabu?.status==='completed'?'success':'neutral'}>Naabu {naabu?.status||'not run'}</Badge><Badge tone={openvas?.status==='completed'?'success':openvas?.status==='failed'?'warning':'neutral'}>OpenVAS {openvas?.status||'not run'}</Badge></div>
-                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!engineStatus?.worker?.connected} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
+                      <button className="primaryBtn smallBtn" disabled={!networkAuthorized||networkScanningId===network.id||!networkWorkerReady} onClick={()=>runNetworkScan(network.id)}>{networkScanningId===network.id?'Scanning…':'Scan'}</button>
                     </div>;
                   })}
                   {!project.networks?.length?<div className="emptyRow">No internal networks registered yet.</div>:null}
