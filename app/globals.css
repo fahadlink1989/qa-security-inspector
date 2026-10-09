@@ -254,3 +254,7 @@ a{text-decoration:none;color:inherit}
 }
 
 .targetActions{display:flex;align-items:center;justify-content:flex-end;gap:6px;min-width:240px}.targetActions .smallBtn{padding:8px 10px}.targetActions .rowMenu{white-space:nowrap}
+
+
+.workspaceSelect > button{width:100%;margin-top:8px;min-height:40px;background:#223046;color:#e9f0fa;border-color:#3b4c63;font-size:12px}.workspaceSelect > label:not(:first-child){margin-top:14px}.emptyState .primaryBtn{margin:16px 0;min-height:44px}.formError{color:#b42318;background:#fff1f0;padding:12px;border-radius:6px}.modal ol{line-height:1.8;padding:0 24px 0 44px}.modal ol li{margin:12px 0}.tabs button:disabled{opacity:.55;cursor:not-allowed}
+.leftRail{overflow-y:auto}.brandMark,.workspaceSelect,.primaryNav,.gettingStarted,.railBottom{flex-shrink:0}

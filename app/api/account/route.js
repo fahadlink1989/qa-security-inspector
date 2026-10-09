@@ -14,6 +14,29 @@ export async function POST(request) {
   try {
     checkOrigin(request);
     const body=await request.json();
+    if(['create_workspace','switch_workspace'].includes(body.action)) {
+      const account=await session(request);
+      if(!account)return Response.json({error:'Sign in to manage workspaces.'},{status:401});
+      let workspaceId;
+      if(body.action==='create_workspace') {
+        const name=String(body.name||'').trim();
+        if(!name||name.length>100)return Response.json({error:'Enter a workspace name of 1–100 characters.'},{status:400});
+        await rateLimit('workspace-create:'+account.userId,20,86400);
+        workspaceId=await transaction(async client=>{
+          const id=crypto.randomUUID();
+          await client.query('INSERT INTO inspector_workspaces(id,name,state) VALUES($1,$2,$3)',[id,name,JSON.stringify(initialState(id,name))]);
+          await client.query("INSERT INTO inspector_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')",[id,account.userId]);
+          await client.query('UPDATE inspector_sessions SET workspace_id=$1 WHERE token_hash=$2 AND user_id=$3',[id,hashToken(sessionToken(request)),account.userId]);
+          return id;
+        });
+      } else {
+        const updated=await database().query(`UPDATE inspector_sessions s SET workspace_id=m.workspace_id FROM inspector_memberships m
+          WHERE s.token_hash=$1 AND s.user_id=$2 AND m.user_id=s.user_id AND m.workspace_id=$3 RETURNING s.workspace_id`,[hashToken(sessionToken(request)),account.userId,body.workspaceId]);
+        if(!updated.rowCount)return Response.json({error:'Workspace not found or access denied.'},{status:403});
+        workspaceId=updated.rows[0].workspace_id;
+      }
+      return Response.json({workspaceId},{headers:{'cache-control':'no-store'}});
+    }
     if(body.action==='logout') {
       await database().query('DELETE FROM inspector_sessions WHERE token_hash=$1',[hashToken(sessionToken(request))]);
       return Response.json({ok:true},{headers:{'set-cookie':cookie('',0)}});

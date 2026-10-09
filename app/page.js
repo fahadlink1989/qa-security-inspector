@@ -1,7 +1,7 @@
 'use client';
 import { currentRiskRows } from '../lib/riskModel.mjs';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const severityOrder={Critical:5,High:4,Medium:3,Low:2,Informational:1};
 
@@ -29,10 +29,20 @@ function scanLabel(scan){
 }
 
 export default function Home(){
+  const loadEpoch=useRef(0);
+  const workspaceSwitching=useRef(false);
   const [data,setData]=useState({projects:[],scans:[],jobs:[],workspace:{}});
+  const [workspaceModal,setWorkspaceModal]=useState(false);
+  const [workspaceName,setWorkspaceName]=useState('');
+  const [workspaceBusy,setWorkspaceBusy]=useState(false);
+  const [workspaceError,setWorkspaceError]=useState('');
+  const [targetBusy,setTargetBusy]=useState(false);
+  const [targetError,setTargetError]=useState('');
+  const [scanAfterTarget,setScanAfterTarget]=useState(false);
   const [view,setView]=useState('dashboard');
   const [selectedProjectId,setSelectedProjectId]=useState('');
   const [loading,setLoading]=useState(true);
+  const [loadError,setLoadError]=useState('');
   const [notice,setNotice]=useState('');
   const [newScanOpen,setNewScanOpen]=useState(false);
   const [addTargetOpen,setAddTargetOpen]=useState(false);
@@ -65,18 +75,23 @@ export default function Home(){
   });
 
   async function load(preferredProjectId,silent=false){
-    if(!silent) setLoading(true);
+    if(silent&&workspaceSwitching.current)return;
+    const epoch=++loadEpoch.current;
+    if(!silent){setLoading(true);setLoadError('');}
     try{
       const [response,engineResponse]=await Promise.all([
         fetch('/api/workspace',{cache:'no-store'}),
         fetch('/api/engine-status',{cache:'no-store'}).catch(()=>null)
       ]);
+      if(epoch!==loadEpoch.current)return;
       if(response.status===401){window.location.assign('/login');return;}
       const json=await response.json();
       if(!response.ok) throw new Error(json.error||'Could not load workspace.');
+      if(epoch!==loadEpoch.current)return;
       setData(json);
       if(engineResponse?.ok) setEngineStatus(await engineResponse.json());
-      const id=preferredProjectId || selectedProjectId || json.projects?.[0]?.id || '';
+      const candidate=preferredProjectId||selectedProjectId;
+      const id=json.projects?.some(p=>p.id===candidate)?candidate:(json.projects?.[0]?.id||'');
       setSelectedProjectId(id);
       const p=json.projects?.find(x=>x.id===id);
       if(p&&!silent){
@@ -87,15 +102,13 @@ export default function Home(){
           networkTargetId:p.networks?.some(n=>n.id===prev.networkTargetId)?prev.networkTargetId:(p.networks?.[0]?.id||'')
         }));
       }
-    }catch(error){setNotice(error.message);}
-    finally{if(!silent) setLoading(false);}
+    }catch(error){setNotice(error.message);if(!silent)setLoadError(error.message);}
+    finally{if(!silent&&epoch===loadEpoch.current) setLoading(false);}
   }
 
   useEffect(()=>{
     load();
-    try{
-      if(!localStorage.getItem('inspector-onboarding-v2')) setOnboardingOpen(true);
-    }catch{}
+
   },[]);
 
   const networkWorkerReady=Boolean(engineStatus?.worker?.connected&&engineStatus?.worker?.health?.allowPrivateTargets);
@@ -177,23 +190,43 @@ export default function Home(){
     setSelectedRisk(null);
   }
 
-  async function addTarget(event){
-    event.preventDefault();
-    if(!project||!targetUrl) return;
+  async function changeWorkspace(body){
+    workspaceSwitching.current=true;loadEpoch.current++;
     try{
-      await workspaceAction(editTargetId
-        ?{action:'update_asset',projectId:project.id,assetId:editTargetId,url:targetUrl,label:targetLabel}
-        :{action:'add_asset',projectId:project.id,url:targetUrl,label:targetLabel});
-      setTargetUrl('');
-      setTargetLabel('');
-      setEditTargetId('');
-      setAddTargetOpen(false);
-      await load(project.id);
-      setNotice(editTargetId?'Target updated. Previous scan history is retained.':'Target added. You can start a scan now.');
-    }catch(error){setNotice(error.message);}
+    const response=await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+    const result=await response.json();if(!response.ok)throw new Error(result.error);
+    setSelectedProjectId('');setSelectedRisk(null);setNewScanOpen(false);setAddTargetOpen(false);
+    setView('dashboard');await load('');
+    }finally{workspaceSwitching.current=false;}
+  }
+  async function createWorkspace(event){
+    event.preventDefault();setWorkspaceBusy(true);setWorkspaceError('');
+    try{await changeWorkspace({action:'create_workspace',name:workspaceName});setWorkspaceModal(false);setWorkspaceName('');setNotice('Workspace created. Add your first target to get started.');}
+    catch(error){setWorkspaceError(error.message);}finally{setWorkspaceBusy(false);}
+  }
+  async function addTarget(event){
+    event.preventDefault();if(!targetUrl||targetBusy)return;
+    setTargetBusy(true);setTargetError('');
+    try{
+      let projectId=project?.id,assetId;
+      if(!project){
+        const created=await workspaceAction({action:'create_project',name:'Web targets',url:targetUrl,label:targetLabel});
+        projectId=created.id;assetId=created.assets[0].id;
+      }else{
+        const asset=await workspaceAction(editTargetId?{action:'update_asset',projectId,assetId:editTargetId,url:targetUrl,label:targetLabel}:{action:'add_asset',projectId,url:targetUrl,label:targetLabel});
+        assetId=asset.id;
+      }
+      await load(projectId);
+      setTargetUrl('');setTargetLabel('');setEditTargetId('');setAddTargetOpen(false);
+      if(scanAfterTarget){setNewScan(prev=>({...prev,assetId,authorized:false}));setNewScanOpen(true);setScanAfterTarget(false);}
+      else setView('targets');
+      setNotice(editTargetId?'Target updated. Previous scan history is retained.':'Target saved. Select New Scan when you are ready; adding a target does not start a scan.');
+    }catch(error){setTargetError(error.message);}finally{setTargetBusy(false);}
   }
 
+  function openAddTarget(){setScanAfterTarget(false);setTargetError('');setAddTargetOpen(true);}
   function editTarget(asset){
+    setScanAfterTarget(false);setTargetError('');
     setEditTargetId(asset.id);
     setTargetUrl(asset.url);
     setTargetLabel(asset.label||'');
@@ -331,6 +364,7 @@ export default function Home(){
   }
 
   function openNewScan(assetId){
+    if(!project?.assets?.some(a=>a.status==='active')){setScanAfterTarget(true);setTargetError('');setAddTargetOpen(true);return;}
     setNewScan(prev=>({...prev,assetId:assetId||prev.assetId||project?.assets?.[0]?.id||'',networkTargetId:prev.networkTargetId||project?.networks?.[0]?.id||'',authorized:false}));
     setNewScanOpen(true);
   }
@@ -349,6 +383,7 @@ export default function Home(){
     setOnboardingOpen(false);
   }
 
+  if(!loading&&loadError&&!data.workspace?.id)return <main className="emptyState"><h1>Could not load your workspace</h1><p>{loadError}</p><button className="primaryBtn" onClick={()=>load()}>Try again</button></main>;
   if(loading) return <div className="loadingScreen">Loading Inspector…</div>;
 
   return (
@@ -357,11 +392,12 @@ export default function Home(){
         <div className="brandMark"><div className="brandIcon">I</div><strong>Inspector</strong></div>
 
         <div className="workspaceSelect">
-          <label>Workspace</label>
-          <select value={selectedProjectId} onChange={e=>selectProject(e.target.value)}>
-            <option value="">Select workspace</option>
-            {data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+          <label htmlFor="workspace-picker">Workspace</label>
+          <select id="workspace-picker" value={data.workspace?.id||''} disabled={workspaceBusy} onChange={async e=>{setWorkspaceBusy(true);try{await changeWorkspace({action:'switch_workspace',workspaceId:e.target.value});}catch(error){setNotice(error.message);}finally{setWorkspaceBusy(false);}}}>
+            {(data.workspaces||[data.workspace]).filter(w=>w?.id).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
+          <button className="secondaryBtn" onClick={()=>{setWorkspaceError('');setWorkspaceModal(true);}}>＋ Create workspace</button>
+          {data.projects.length>1?<><label htmlFor="target-group">Target group</label><select id="target-group" value={selectedProjectId} onChange={e=>selectProject(e.target.value)}>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></>:null}
         </div>
 
         <nav className="primaryNav">
@@ -382,16 +418,15 @@ export default function Home(){
         </nav>
 
         <div className="gettingStarted">
-          <div className="getHead"><strong>Getting started</strong><span>{latestScan?'2 of 2':'1 of 2'}</span></div>
-          <div className="progressTrack"><i style={{width:latestScan?'100%':'50%'}}/></div>
-          <button className={currentRisks.length?'done':''} onClick={()=>setView('risks')}><span>✓</span> Review your risks</button>
-          <button className={latestScan?'done':''} onClick={()=>setView('reports')}><span>□</span> Generate a report</button>
+          <div className="getHead"><strong>Getting started</strong><span>{latestScan?'2 of 2':project?'1 of 2':'0 of 2'}</span></div>
+          <div className="progressTrack"><i style={{width:latestScan?'100%':project?'50%':'0%'}}/></div>
+          <button className={project?'done':''} onClick={openAddTarget}><span>{project?'✓':'1'}</span> Add a target</button>
+          <button className={latestScan?'done':''} onClick={()=>openNewScan()}><span>{latestScan?'✓':'2'}</span> Run your first scan</button>
         </div>
 
         <div className="railBottom">
-          <button onClick={()=>setNotice('Support workflow can be connected to your helpdesk or email.')}>✉ Support</button>
-          <button onClick={()=>setNotice('API access will use the same project and scan model as the dashboard.')}>⌘ API Docs</button>
-          <button onClick={()=>setOnboardingOpen(true)}>？ Help Center</button>
+          <button onClick={()=>setOnboardingOpen(true)}>？ Getting started</button>
+          <button onClick={async()=>{await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'logout'})});window.location.assign('/login');}}>Sign out</button>
         </div>
       </aside>
 
@@ -403,7 +438,7 @@ export default function Home(){
         {view==='dashboard'?(
           <section className="page">
             <header className="pageHeader">
-              <div><h1>Dashboard</h1><p>Security posture across your current workspace.</p></div>
+              <div><h1>Dashboard</h1><p>Security posture for {data.workspace?.name||'your workspace'}.</p></div>
               <div className="headerActions">
                 <span className="miniStat">▦ {activeJobs.length?activeJobs.length+' scan'+(activeJobs.length===1?'':'s')+' in progress':'No scans in progress'}</span>
                 <span className="miniStat">{project?.schedule&&project.schedule!=='manual'?'1 scheduled scan':'Manual scans'}</span>
@@ -412,10 +447,10 @@ export default function Home(){
             </header>
 
             {!project?(
-              <div className="emptyState"><h2>Create or select a workspace</h2><p>Inspector organizes targets, scans, risks and reports by workspace.</p></div>
+              <div className="emptyState"><h2>{data.workspace?.name} is ready</h2><p>Add a website or application you are authorized to test. Then choose a scan and review its results here.</p><button className="primaryBtn" onClick={()=>{setScanAfterTarget(false);setTargetError('');setAddTargetOpen(true);}}>Add your first target</button><p className="muted">1. Add target → 2. Run an authorized scan → 3. Review risks and reports</p></div>
             ):(
               <>
-                <div className="sectionTitle"><h2>Risks detected</h2><span>Total: {summary.total}</span></div>
+                <div className="sectionTitle"><h2>{scanRows.length?'Risks detected':'Awaiting your first scan'}</h2><span>Total: {summary.total}</span></div>
                 <div className="riskCards">
                   <button className="riskCard critical" onClick={()=>{setRiskSeverity('Critical');setRiskStatus('Open');setView('risks')}}><span>Critical</span><strong>{summary.critical}</strong></button>
                   <button className="riskCard high" onClick={()=>{setRiskSeverity('High');setRiskStatus('Open');setView('risks')}}><span>High</span><strong>{summary.high}</strong></button>
@@ -477,9 +512,9 @@ export default function Home(){
           <section className="page">
             <header className="pageHeader">
               <div><h1>Targets</h1><p>Public assets included in this workspace.</p></div>
-              <div className="headerActions"><button className="secondaryBtn" onClick={()=>setAddTargetOpen(true)}>＋ Add Target</button><button className="primaryBtn" onClick={()=>openNewScan()}>＋ New Scan</button></div>
+              <div className="headerActions"><button className="secondaryBtn" onClick={openAddTarget}>＋ Add Target</button><button className="primaryBtn" onClick={()=>openNewScan()}>＋ New Scan</button></div>
             </header>
-            {!project?<div className="emptyState">Select a workspace first.</div>:(
+            {!project?<div className="emptyState"><h2>No targets in {data.workspace?.name} yet</h2><p>Your workspace is created. Add your first target to begin.</p><button className="primaryBtn" onClick={openAddTarget}>Add your first target</button></div>:(
               <div className="dataCard">
                 <div className="tableHeader targetGrid"><span>Target</span><span>Type</span><span>Last scanned</span><span>Created</span><span/></div>
                 {(project.assets||[]).map(asset=>{
@@ -565,8 +600,8 @@ export default function Home(){
         {view==='reports'?(
           <section className="page">
             <header className="pageHeader"><div><h1>Reports</h1><p>Create stakeholder-ready reports from the latest workspace findings.</p></div></header>
-            <div className="tabs"><button className="active">Reports</button><button>Scheduled Reports</button></div>
-            {!project||(!latestScan&&!summary.total)?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p></div>:(
+            <div className="tabs"><button className="active">Reports</button><button disabled title="Scheduled report delivery is not available yet">Scheduled Reports · Coming later</button></div>
+            {!project||!scanRows.length?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p><button className="primaryBtn" onClick={()=>openNewScan()}>{project?'Choose a scan':'Add your first target'}</button></div>:(
               <div className="reportBuilder">
                 <h2>Create a Report</h2>
                 <label>Report scope<span>Latest completed scan for {project.name}</span></label>
@@ -597,7 +632,7 @@ export default function Home(){
               </div>
             </header>
 
-            {!project?<div className="emptyState">Select a workspace first.</div>:(
+            {!project?<div className="emptyState"><h2>No targets in {data.workspace?.name} yet</h2><p>Your workspace is created. Add your first target to begin.</p><button className="primaryBtn" onClick={openAddTarget}>Add your first target</button></div>:(
               <>
                 {!networkWorkerReady?(
                   <div className="networkCallout">
@@ -649,12 +684,12 @@ export default function Home(){
 
         {view==='settings'?(
           <section className="page">
-            <header className="pageHeader"><div><h1>Settings</h1><p>Storage: {engineStatus?.orchestration?.storage||'checking'} · Scan consumer: {engineStatus?.orchestration?.consumerHealthy?'connected':'checking / unavailable'}</p><button className="secondaryBtn" onClick={async()=>{await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'logout'})});window.location.assign('/login');}}>Sign out</button><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
-            {!project?<div className="emptyState">Select a workspace first.</div>:(
+            <header className="pageHeader"><div><h1>Settings</h1><p>Storage: {engineStatus?.orchestration?.storage||'checking'} · Scan consumer: {engineStatus?.orchestration?.consumerHealthy?'connected':'checking / unavailable'}</p><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
+            {!project?<div className="emptyState"><h2>No targets in {data.workspace?.name} yet</h2><p>Your workspace is created. Add your first target to begin.</p><button className="primaryBtn" onClick={openAddTarget}>Add your first target</button></div>:(
               <div className="settingsGrid">
                 <form className="settingsCard" onSubmit={saveSettings}>
-                  <h2>Workspace</h2>
-                  <label>Name<input value={settings.name} onChange={e=>setSettings({...settings,name:e.target.value})}/></label>
+                  <h2>Target monitoring</h2>
+                  <label>Target group name<input value={settings.name} onChange={e=>setSettings({...settings,name:e.target.value})}/></label>
                   <label>Monitoring schedule<select value={settings.schedule} onChange={e=>setSettings({...settings,schedule:e.target.value})}><option value="manual">Manual</option><option value="daily">Daily</option><option value="weekly">Weekly</option></select></label>
                   <label>Scheduled scan profile<select value={settings.scheduledMode} onChange={e=>setSettings({...settings,scheduledMode:e.target.value})}><option value="standard">Web App Scan</option><option value="deep">Attack Surface Scan</option></select></label>
                   <label>Alert webhook<input type="url" placeholder={project.webhookUrl?'Webhook configured — enter a new URL to replace':'https://hooks.slack.com/...'} value={settings.webhookUrl} onChange={e=>setSettings({...settings,webhookUrl:e.target.value})}/></label>
@@ -676,6 +711,10 @@ export default function Home(){
         ):null}
       </section>
 
+      {workspaceModal?<div className="modalBackdrop"><section className="modal smallModal" role="dialog" aria-modal="true" aria-labelledby="create-workspace-title">
+        <div className="modalHead"><div><h2 id="create-workspace-title">Create workspace</h2><p>Keep a separate organization or client’s targets, scans, and risks together.</p></div><button aria-label="Close workspace dialog" disabled={workspaceBusy} onClick={()=>setWorkspaceModal(false)}>×</button></div>
+        <form onSubmit={createWorkspace}><label className="field">Workspace name<input autoFocus required maxLength={100} value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} placeholder="Company or client name"/></label>{workspaceError?<p role="alert">{workspaceError}</p>:null}<div className="modalFoot"><button type="button" className="secondaryBtn" disabled={workspaceBusy} onClick={()=>setWorkspaceModal(false)}>Cancel</button><button className="primaryBtn" disabled={workspaceBusy}>{workspaceBusy?'Creating…':'Create workspace'}</button></div></form>
+      </section></div>:null}
       {newScanOpen?(
         <div className="modalBackdrop" onMouseDown={e=>{if(e.target===e.currentTarget&&!scanRunning)setNewScanOpen(false)}}>
           <section className="modal scanModal">
@@ -691,17 +730,17 @@ export default function Home(){
               ].map(([key,title,kicker,desc])=><button key={key} className={newScan.type===key?'selected':''} onClick={()=>setNewScan({...newScan,type:key})}><span>{kicker}</span><strong>{title}</strong><small>{desc}</small></button>)}
             </div>
 
-            {!['code','network'].includes(newScan.type)?<label className="field">Target<select value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {!['code','network'].includes(newScan.type)?<label className="field">Target<select aria-label="Target" value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
             {newScan.type==='network'?<label className="field">Internal network<select value={newScan.networkTargetId} onChange={e=>setNewScan({...newScan,networkTargetId:e.target.value})}><option value="">Select network</option>{(project?.networks||[]).map(n=><option key={n.id} value={n.id}>{n.label} · {n.cidr}</option>)}</select><small>Internal scans require the scanner worker to run where it can reach this private CIDR.</small></label>:null}
 
             {newScan.type==='authenticated'?<>
               <label className="field">Session type<select value={newScan.authMethod} onChange={e=>setNewScan({...newScan,authMethod:e.target.value})}><option value="bearer">Bearer token</option><option value="cookie">Cookie header</option></select></label>
-              <label className="field">Authorized test session<input type="password" autoComplete="off" value={newScan.credential} onChange={e=>setNewScan({...newScan,credential:e.target.value})} placeholder={newScan.authMethod==='cookie'?'session=…':'eyJ… or application test token'}/><small>Used in memory for this scan only. Never persisted.</small></label>
+              <label className="field">Authorized test session<input type="password" autoComplete="off" value={newScan.credential} onChange={e=>setNewScan({...newScan,credential:e.target.value})} placeholder={newScan.authMethod==='cookie'?'session=…':'eyJ… or application test token'}/><small>Encrypted while queued and running, then removed when the job finishes.</small></label>
             </>:null}
 
             {newScan.type==='code'?<>
               <label className="field">GitHub repository URL<input type="url" value={newScan.repositoryUrl} onChange={e=>setNewScan({...newScan,repositoryUrl:e.target.value})} placeholder="https://github.com/org/repository"/></label>
-              <label className="field">Private repository token (optional)<input type="password" autoComplete="off" value={newScan.repositoryToken} onChange={e=>setNewScan({...newScan,repositoryToken:e.target.value})} placeholder="Used only for this request"/><small>Token values are never stored in scan history.</small></label>
+              <label className="field">Private repository token (optional)<input type="password" autoComplete="off" value={newScan.repositoryToken} onChange={e=>setNewScan({...newScan,repositoryToken:e.target.value})} placeholder="Encrypted for this scan job"/><small>Token values are never stored in scan history.</small></label>
             </>:null}
 
             <label className="authConfirm"><input type="checkbox" checked={newScan.authorized} onChange={e=>setNewScan({...newScan,authorized:e.target.checked})}/><span><strong>Authorization confirmed</strong><small>I own this target/repository or have explicit permission to test it.</small></span></label>
@@ -715,7 +754,7 @@ export default function Home(){
         <div className="modalBackdrop" onMouseDown={e=>{if(e.target===e.currentTarget)setAddTargetOpen(false)}}>
           <section className="modal smallModal">
             <div className="modalHead"><div><h2>{editTargetId?'Edit Target':'Add Target'}</h2><p>{editTargetId?'Update the active target details. Previous scan history stays available.':'Add a public HTTP(S) target to this workspace.'}</p></div><button onClick={()=>{setAddTargetOpen(false);setEditTargetId('')}}>×</button></div>
-            <form onSubmit={addTarget}><label className="field">Target name<input type="text" maxLength="100" placeholder="Production app" value={targetLabel} onChange={e=>setTargetLabel(e.target.value)}/></label><label className="field">Target URL<input type="url" required placeholder="https://app.example.com" value={targetUrl} onChange={e=>setTargetUrl(e.target.value)}/></label><div className="modalFoot"><button type="button" className="secondaryBtn" onClick={()=>{setAddTargetOpen(false);setEditTargetId('')}}>Cancel</button><button className="primaryBtn">{editTargetId?'Save Target':'Add Target'}</button></div></form>
+            <form onSubmit={addTarget}>{targetError?<p role="alert" className="formError">{targetError}</p>:null}<label className="field">Target name<input type="text" maxLength="100" placeholder="Production app" value={targetLabel} onChange={e=>setTargetLabel(e.target.value)}/></label><label className="field">Target URL<input type="url" required placeholder="https://app.example.com" value={targetUrl} onChange={e=>setTargetUrl(e.target.value)}/></label><div className="modalFoot"><button type="button" className="secondaryBtn" onClick={()=>{setAddTargetOpen(false);setEditTargetId('')}}>Cancel</button><button className="primaryBtn" disabled={targetBusy}>{targetBusy?'Saving…':editTargetId?'Save Target':scanAfterTarget?'Save target & choose scan':'Add Target'}</button></div></form>
           </section>
         </div>
       ):null}
@@ -743,16 +782,9 @@ export default function Home(){
       {onboardingOpen?(
         <div className="modalBackdrop onboardingBackdrop">
           <section className="modal onboardingModal">
-            <div className="modalHead"><div><h2>What would you like to secure first?</h2><p>This only changes the guidance we show you. You can use every scanner later.</p></div></div>
-            <div className="onboardingChoices">
-              {[
-                ['surface','Monitor my public attack surface','Discover new public assets and exposures.'],
-                ['web','Scan a web application or API','Find web, browser, API and configuration risks.'],
-                ['code','Scan source code and dependencies','Detect secrets and vulnerable packages.'],
-                ['monitor','Set up continuous monitoring','Track regressions and generate reports over time.']
-              ].map(([key,title,desc])=><button key={key} className={onboardingChoice===key?'selected':''} onClick={()=>setOnboardingChoice(key)}><span className="choiceIcon">{key==='surface'?'◎':key==='web'?'</>':key==='code'?'⌘':'◷'}</span><div><strong>{title}</strong><span>{desc}</span></div><i>{onboardingChoice===key?'●':'○'}</i></button>)}
-            </div>
-            <div className="modalFoot"><button className="textBtn" onClick={finishOnboarding}>Skip</button><button className="primaryBtn" onClick={()=>{finishOnboarding(); if(onboardingChoice)setView(onboardingChoice==='surface'||onboardingChoice==='web'?'scans':onboardingChoice==='code'?'settings':'settings')}}>Continue</button></div>
+            <div className="modalHead"><div><h2>Get started with Inspector</h2><p>Your workspace keeps your targets, scans, risks, and reports together.</p></div></div>
+            <ol><li><strong>Add a target.</strong> Enter a website or app you own or have permission to test.</li><li><strong>Start a scan.</strong> Choose the scan type and confirm authorization. Watch progress in Scans.</li><li><strong>Review the result.</strong> Open Risks for evidence and remediation, then use Reports to export findings.</li></ol>
+            <div className="modalFoot"><button className="secondaryBtn" onClick={finishOnboarding}>Close</button><button className="primaryBtn" onClick={()=>{finishOnboarding();project?openNewScan():setAddTargetOpen(true);}}>{project?'Choose a scan':'Add your first target'}</button></div>
           </section>
         </div>
       ):null}
