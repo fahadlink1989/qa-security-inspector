@@ -50,7 +50,8 @@ export async function verifyUI(base){
     assert.equal(snapshot.workspace.id,firstWorkspace);assert.equal(snapshot.projects[0].assets[0].label,'Inspector QA target');
     await page.getByRole('button',{name:'＋ New Scan',exact:true}).click();
     await page.getByRole('heading',{name:'Choose what you want to test',exact:true}).waitFor();
-    assert.ok((await page.getByLabel('Target',{exact:true}).locator('option:checked').textContent()).includes('Inspector QA target'));
+    console.log('SCAN_SELECTOR_DIAGNOSTIC',JSON.stringify(await page.locator('.scanModal select').evaluateAll(items=>items.map(item=>({label:item.getAttribute('aria-label'),value:item.value,options:[...item.options].map(o=>({text:o.textContent,value:o.value,selected:o.selected}))})))));
+    assert.equal(await page.locator('.scanModal select').first().inputValue(),snapshot.projects[0].assets[0].id,'scan wizard preselects saved target');
     await page.getByRole('button',{name:'Cancel',exact:true}).click();
     await page.locator('nav').getByRole('button',{name:/Settings/}).click();
     await page.getByRole('button',{name:'Sign out',exact:true}).click();
