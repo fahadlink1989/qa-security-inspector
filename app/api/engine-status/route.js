@@ -7,9 +7,9 @@ export async function GET(){
   const worker=await scannerWorkerHealth();
   return Response.json({
     builtIn:[
-      {id:'playwright',name:'Playwright',purpose:'Rendered browser QA',status:'connected'},
-      {id:'axe',name:'axe-core',purpose:'Accessibility analysis',status:'connected'},
-      {id:'nvd',name:'NVD / OSV enrichment',purpose:'Version and dependency vulnerability intelligence',status:'connected'}
+      {id:'playwright',name:'Playwright',purpose:'Rendered browser QA',status:'available'},
+      {id:'axe',name:'axe-core',purpose:'Accessibility analysis',status:'available'},
+      {id:'nvd',name:'NVD / OSV enrichment',purpose:'Version and dependency vulnerability intelligence',status:'available'}
     ],
     worker:{
       ...worker,
@@ -20,7 +20,7 @@ export async function GET(){
         {id:'openvas',name:'Greenbone / OpenVAS',profile:'network assessment'},
         {id:'trivy',name:'Trivy',profile:'code / image / IaC'},
         {id:'gitleaks',name:'Gitleaks',profile:'repository secrets'}
-      ]
+      ].map(engine=>({...engine,available:Boolean(worker.connected&&worker.health?.engines?.[engine.id]),status:worker.connected&&worker.health?.engines?.[engine.id]?'available':'unavailable'}))
     }
   },{headers:{'cache-control':'no-store'}});
 }

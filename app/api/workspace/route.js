@@ -1,3 +1,4 @@
+import { applyWorkflow } from '../../../lib/riskModel.mjs';
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { latestScanForProject, makeProject, mutateState, readState } from '../../../lib/store';
@@ -171,8 +172,7 @@ async function updateFindingStatus(scanId, fingerprint, status) {
     if (!scan) throw new Error('Scan not found.');
     const finding = scan.findings.find((item) => item.fingerprint === fingerprint);
     if (!finding) throw new Error('Finding not found.');
-    finding.workflowStatus = status;
-    finding.statusUpdatedAt = new Date().toISOString();
+    applyWorkflow(finding,status);
     changed = finding;
     return state;
   });
@@ -192,8 +192,7 @@ async function updateNetworkFindingStatus(projectId, networkScanId, fingerprint,
     if (!scan) throw new Error('Network scan not found.');
     const finding = (scan.findings || []).find((item) => item.fingerprint === fingerprint);
     if (!finding) throw new Error('Finding not found.');
-    finding.workflowStatus = status;
-    finding.statusUpdatedAt = new Date().toISOString();
+    applyWorkflow(finding,status);
     changed = finding;
     return state;
   });
@@ -213,9 +212,22 @@ async function updateAuthFindingStatus(projectId, authScanId, fingerprint, statu
     if (!authScan) throw new Error('Authenticated Scan not found.');
     const finding = (authScan.findings || []).find((item) => item.fingerprint === fingerprint);
     if (!finding) throw new Error('Finding not found.');
-    finding.workflowStatus = status;
-    finding.statusUpdatedAt = new Date().toISOString();
+    applyWorkflow(finding,status);
     changed = finding;
+    return state;
+  });
+  return changed;
+}
+
+async function updateCodeFindingStatus(projectId, scanId, fingerprint, status) {
+  let changed;
+  await mutateState(state => {
+    const project=state.projects.find(item=>item.id===projectId);
+    const scan=project?.codeScans?.find(item=>item.id===scanId);
+    if(!scan) throw new Error('Code scan not found.');
+    const finding=(scan.findings||[]).find(item=>(item.fingerprint||item.id)===fingerprint);
+    if(!finding) throw new Error('Finding not found.');
+    changed=applyWorkflow(finding,status);
     return state;
   });
   return changed;
@@ -248,6 +260,8 @@ export async function POST(request) {
       result = await removeAsset(body.projectId,body.assetId);
     } else if (body.action === 'add_network_target') {
       result = await addNetworkTarget(body.projectId, body);
+    } else if (body.action === 'code_finding_status') {
+      result = await updateCodeFindingStatus(body.projectId,body.codeScanId,body.fingerprint,body.status);
     } else if (body.action === 'finding_status') {
       result = await updateFindingStatus(body.scanId, body.fingerprint, body.status);
     } else if (body.action === 'retest_finding') {
@@ -276,3 +290,4 @@ export async function POST(request) {
     return Response.json({ error: error?.message || 'Request failed.' }, { status: 400 });
   }
 }
+

@@ -1,3 +1,4 @@
+import { carryRiskLifecycle } from '../../../lib/riskModel.mjs';
 import { waitUntil } from '@vercel/functions';
 import { mutateState, readState } from '../../../lib/store';
 import { scanGitHubRepository } from '../../../lib/codeSecurity';
@@ -83,6 +84,8 @@ export async function POST(request) {
       await mutateState((next)=>{
         const target=next.projects.find((item)=>item.id===project.id);
         if(!target) throw new Error('Project not found.');
+        const previous=(target.codeScans||[]).find(item=>JSON.stringify(item.repository)===JSON.stringify(codeScan.repository));
+        carryRiskLifecycle(codeScan,previous);
         target.codeScans=[codeScan,...(target.codeScans||[])].slice(0,10);
         return next;
       });
