@@ -9,8 +9,10 @@ export async function verifyUI(base){
   const db=new pg.Client({connectionString:process.env.DATABASE_URL});await db.connect();
   let browser;
   try {
-    browser=await playwright.launch({args:chromium.args,executablePath:await chromium.executablePath(),headless:true});
+    browser=await playwright.launch({args:chromium.args.filter(arg=>arg!=='--disable-web-security'),executablePath:await chromium.executablePath(),headless:true});
     const page=await browser.newPage();
+    page.on('request',request=>{if(request.url().endsWith('/api/account'))console.log('BROWSER_ACCOUNT_REQUEST',JSON.stringify({origin:request.headers().origin||null,url:request.url()}));});
+    page.on('response',async response=>{if(response.url().endsWith('/api/account')&&!response.ok())console.log('BROWSER_ACCOUNT_ERROR',response.status(),await response.text());});
     await page.goto(base+'/login',{waitUntil:'networkidle',timeout:60000});
     await page.getByRole('button',{name:'Create a new workspace',exact:true}).click();
     await page.getByLabel('Workspace name').fill('UI verification');

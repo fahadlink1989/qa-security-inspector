@@ -648,7 +648,7 @@ export default function Home(){
 
         {view==='settings'?(
           <section className="page">
-            <header className="pageHeader"><div><h1>Settings</h1><button className="secondaryBtn" onClick={async()=>{await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'logout'})});window.location.assign('/login');}}>Sign out</button><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
+            <header className="pageHeader"><div><h1>Settings</h1><p>Storage: {engineStatus?.orchestration?.storage||'checking'} · Scan consumer: {engineStatus?.orchestration?.consumerHealthy?'connected':'checking / unavailable'}</p><button className="secondaryBtn" onClick={async()=>{await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'logout'})});window.location.assign('/login');}}>Sign out</button><p>Monitoring, notifications and scanner platform configuration.</p></div></header>
             {!project?<div className="emptyState">Select a workspace first.</div>:(
               <div className="settingsGrid">
                 <form className="settingsCard" onSubmit={saveSettings}>
