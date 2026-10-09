@@ -76,6 +76,7 @@ export async function verifyUI(base){
     const pdfLink=await page.getByRole('link',{name:'Download scan report'}).getAttribute('href');
     const pdf=await page.request.get(base+pdfLink);assert.equal(pdf.status(),200);assert.equal((await pdf.body()).subarray(0,4).toString(),'%PDF');
     await page.getByRole('button',{name:'Close scan details'}).click();
+    assert.ok(result.findings.length,'the live QA target must expose a finding for remediation QA');
     if(result.findings.length){
       await page.locator('nav').getByRole('button',{name:/Risks/}).click();
       await page.getByRole('button',{name:'Review',exact:true}).first().click();
@@ -89,13 +90,35 @@ export async function verifyUI(base){
       const assigned=snapshot.scans.flatMap(s=>s.findings).find(f=>f.owner==='Platform QA');
       assert.equal(assigned.workflowStatus,'in_progress');
       assert.ok(assigned.notes.includes('Review evidence'));
+      await page.getByRole('button',{name:'Retest finding',exact:true}).click();
+      let verified=false;
+      for(let attempt=0;attempt<150;attempt++){
+        snapshot=await (await page.request.get(base+'/api/workspace')).json();
+        const original=snapshot.scans.find(s=>s.id===result.id)?.findings.find(f=>f.fingerprint===assigned.fingerprint);
+        if(original?.retests?.length){assert.ok(['still_present','resolved','inconclusive'].includes(original.retests.at(-1).status));verified=true;break;}
+        await new Promise(resolve=>setTimeout(resolve,4000));
+      }
+      assert.ok(verified,'retest result must persist');
       await page.reload({waitUntil:'networkidle'});
     }
     for(const format of ['html','csv']){
       const report=await page.request.get(base+'/api/report?'+new URLSearchParams({projectId:snapshot.projects[0].id,format,section:'technical'}));
       assert.equal(report.status(),200);assert.ok((await report.text()).includes('Point-in-time assessment'));
     }
-    console.log('CUSTOMER_JOURNEY_PASS','real scan, target history, scan details, risk ownership/status persistence, PDF/HTML/CSV coverage reports');
+    await page.locator('nav').getByRole('button',{name:/Scans/}).click();
+    await page.getByRole('button',{name:'＋ New Scan',exact:true}).click();
+    await page.getByRole('button',{name:/Web App Scan/}).click();
+    await page.getByLabel('When to run',{exact:true}).selectOption('daily');
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button',{name:'Save schedule',exact:true}).click();
+    await page.getByRole('button',{name:'Stop schedule',exact:true}).waitFor();
+    snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    assert.equal(snapshot.projects[0].assets[0].schedule,'daily');
+    await page.getByRole('button',{name:'Stop schedule',exact:true}).click();
+    await page.getByText('Not scheduled',{exact:true}).waitFor();
+    snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    assert.equal(snapshot.projects[0].assets[0].schedule,'manual');
+    console.log('CUSTOMER_JOURNEY_PASS','real scan, target history, scan details, risk ownership/status persistence, real retest outcome, schedule create/stop, PDF/HTML/CSV coverage reports');
     await page.locator('nav').getByRole('button',{name:/Settings/}).click();
     await page.getByRole('button',{name:'Sign out',exact:true}).click();
     await page.waitForURL(base+'/login');
