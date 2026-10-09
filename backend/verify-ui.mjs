@@ -35,6 +35,8 @@ export async function verifyUI(base){
     let snapshot=await (await page.request.get(base+'/api/workspace')).json();
     assert.equal(snapshot.projects[0].assets[0].label,'Inspector QA target');
     const firstWorkspace=snapshot.workspace.id;
+    const denied=await page.request.post(base+'/api/account',{headers:{origin:base},data:{action:'switch_workspace',workspaceId:crypto.randomUUID()}});
+    assert.equal(denied.status(),403);
     await page.getByRole('button',{name:'＋ Create workspace',exact:true}).click();
     await page.getByLabel('Workspace name',{exact:true}).fill('Second QA workspace');
     await page.getByRole('button',{name:'Create workspace',exact:true}).click();

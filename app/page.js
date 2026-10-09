@@ -1,7 +1,7 @@
 'use client';
 import { currentRiskRows } from '../lib/riskModel.mjs';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 const severityOrder={Critical:5,High:4,Medium:3,Low:2,Informational:1};
 
@@ -29,6 +29,8 @@ function scanLabel(scan){
 }
 
 export default function Home(){
+  const loadEpoch=useRef(0);
+  const workspaceSwitching=useRef(false);
   const [data,setData]=useState({projects:[],scans:[],jobs:[],workspace:{}});
   const [workspaceModal,setWorkspaceModal]=useState(false);
   const [workspaceName,setWorkspaceName]=useState('');
@@ -73,15 +75,19 @@ export default function Home(){
   });
 
   async function load(preferredProjectId,silent=false){
+    if(silent&&workspaceSwitching.current)return;
+    const epoch=++loadEpoch.current;
     if(!silent){setLoading(true);setLoadError('');}
     try{
       const [response,engineResponse]=await Promise.all([
         fetch('/api/workspace',{cache:'no-store'}),
         fetch('/api/engine-status',{cache:'no-store'}).catch(()=>null)
       ]);
+      if(epoch!==loadEpoch.current)return;
       if(response.status===401){window.location.assign('/login');return;}
       const json=await response.json();
       if(!response.ok) throw new Error(json.error||'Could not load workspace.');
+      if(epoch!==loadEpoch.current)return;
       setData(json);
       if(engineResponse?.ok) setEngineStatus(await engineResponse.json());
       const candidate=preferredProjectId||selectedProjectId;
@@ -97,7 +103,7 @@ export default function Home(){
         }));
       }
     }catch(error){setNotice(error.message);if(!silent)setLoadError(error.message);}
-    finally{if(!silent) setLoading(false);}
+    finally{if(!silent&&epoch===loadEpoch.current) setLoading(false);}
   }
 
   useEffect(()=>{
@@ -185,10 +191,13 @@ export default function Home(){
   }
 
   async function changeWorkspace(body){
+    workspaceSwitching.current=true;loadEpoch.current++;
+    try{
     const response=await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
     const result=await response.json();if(!response.ok)throw new Error(result.error);
     setSelectedProjectId('');setSelectedRisk(null);setNewScanOpen(false);setAddTargetOpen(false);
     setView('dashboard');await load('');
+    }finally{workspaceSwitching.current=false;}
   }
   async function createWorkspace(event){
     event.preventDefault();setWorkspaceBusy(true);setWorkspaceError('');
@@ -441,7 +450,7 @@ export default function Home(){
               <div className="emptyState"><h2>{data.workspace?.name} is ready</h2><p>Add a website or application you are authorized to test. Then choose a scan and review its results here.</p><button className="primaryBtn" onClick={()=>{setScanAfterTarget(false);setTargetError('');setAddTargetOpen(true);}}>Add your first target</button><p className="muted">1. Add target → 2. Run an authorized scan → 3. Review risks and reports</p></div>
             ):(
               <>
-                <div className="sectionTitle"><h2>Risks detected</h2><span>Total: {summary.total}</span></div>
+                <div className="sectionTitle"><h2>{scanRows.length?'Risks detected':'Awaiting your first scan'}</h2><span>Total: {summary.total}</span></div>
                 <div className="riskCards">
                   <button className="riskCard critical" onClick={()=>{setRiskSeverity('Critical');setRiskStatus('Open');setView('risks')}}><span>Critical</span><strong>{summary.critical}</strong></button>
                   <button className="riskCard high" onClick={()=>{setRiskSeverity('High');setRiskStatus('Open');setView('risks')}}><span>High</span><strong>{summary.high}</strong></button>
@@ -592,7 +601,7 @@ export default function Home(){
           <section className="page">
             <header className="pageHeader"><div><h1>Reports</h1><p>Create stakeholder-ready reports from the latest workspace findings.</p></div></header>
             <div className="tabs"><button className="active">Reports</button><button disabled title="Scheduled report delivery is not available yet">Scheduled Reports · Coming later</button></div>
-            {!project||(!latestScan&&!summary.total)?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p><button className="primaryBtn" onClick={()=>openNewScan()}>{project?'Choose a scan':'Add your first target'}</button></div>:(
+            {!project||!scanRows.length?<div className="emptyState"><h2>Run a scan first</h2><p>A completed scan is required before Inspector can build a report.</p><button className="primaryBtn" onClick={()=>openNewScan()}>{project?'Choose a scan':'Add your first target'}</button></div>:(
               <div className="reportBuilder">
                 <h2>Create a Report</h2>
                 <label>Report scope<span>Latest completed scan for {project.name}</span></label>
@@ -721,7 +730,7 @@ export default function Home(){
               ].map(([key,title,kicker,desc])=><button key={key} className={newScan.type===key?'selected':''} onClick={()=>setNewScan({...newScan,type:key})}><span>{kicker}</span><strong>{title}</strong><small>{desc}</small></button>)}
             </div>
 
-            {!['code','network'].includes(newScan.type)?<label className="field">Target<select value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {!['code','network'].includes(newScan.type)?<label className="field">Target<select aria-label="Target" value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
             {newScan.type==='network'?<label className="field">Internal network<select value={newScan.networkTargetId} onChange={e=>setNewScan({...newScan,networkTargetId:e.target.value})}><option value="">Select network</option>{(project?.networks||[]).map(n=><option key={n.id} value={n.id}>{n.label} · {n.cidr}</option>)}</select><small>Internal scans require the scanner worker to run where it can reach this private CIDR.</small></label>:null}
 
             {newScan.type==='authenticated'?<>
