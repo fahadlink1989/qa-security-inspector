@@ -11,6 +11,17 @@ export async function verifyUI(base){
   try {
     browser=await playwright.launch({args:chromium.args.filter(arg=>arg!=='--disable-web-security'),executablePath:await chromium.executablePath(),headless:true});
     const page=await browser.newPage();
+    const readWorkspace=async()=>{
+      for(let attempt=0;attempt<4;attempt++){
+        const response=await page.request.get(base+'/api/workspace');
+        const body=await response.text();
+        if(response.ok()&&response.headers()['content-type']?.includes('application/json'))return JSON.parse(body);
+        console.log('WORKSPACE_HTTP_RETRY',response.status(),response.headers()['content-type']||'unknown');
+        if(attempt===3)throw new Error('Workspace unavailable: HTTP '+response.status());
+        await new Promise(resolve=>setTimeout(resolve,2000));
+      }
+    };
+
     page.on('request',request=>{if(request.url().endsWith('/api/account'))console.log('BROWSER_ACCOUNT_REQUEST',JSON.stringify({origin:request.headers().origin||null,url:request.url()}));});
     page.on('response',async response=>{if(response.url().endsWith('/api/account')&&!response.ok())console.log('BROWSER_ACCOUNT_ERROR',response.status(),await response.text());});
     await page.goto(base+'/login',{waitUntil:'networkidle',timeout:60000});
@@ -32,7 +43,7 @@ export async function verifyUI(base){
     await page.getByText('Inspector QA target',{exact:true}).waitFor();
     await page.reload({waitUntil:'networkidle'});
     assert.equal(await page.getByLabel('Workspace',{exact:true}).locator('option:checked').textContent(),'UI verification');
-    let snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    let snapshot=await readWorkspace();
     assert.equal(snapshot.projects[0].assets[0].label,'Inspector QA target');
     const firstWorkspace=snapshot.workspace.id;
     const denied=await page.request.post(base+'/api/account',{headers:{origin:base},data:{action:'switch_workspace',workspaceId:crypto.randomUUID()}});
@@ -41,12 +52,12 @@ export async function verifyUI(base){
     await page.getByLabel('Workspace name',{exact:true}).fill('Second QA workspace');
     await page.getByRole('button',{name:'Create workspace',exact:true}).click();
     await page.getByRole('heading',{name:'Second QA workspace is ready',exact:true}).waitFor();
-    snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    snapshot=await readWorkspace();
     assert.equal(snapshot.projects.length,0);
     await page.getByLabel('Workspace',{exact:true}).selectOption(firstWorkspace);
     await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
     await page.getByText('Security posture for UI verification.',{exact:true}).waitFor();
-    snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    snapshot=await readWorkspace();
     assert.equal(snapshot.workspace.id,firstWorkspace);assert.equal(snapshot.projects[0].assets[0].label,'Inspector QA target');
     await page.getByRole('button',{name:'＋ New Scan',exact:true}).click();
     await page.getByRole('heading',{name:'Choose what you want to test',exact:true}).waitFor();
@@ -58,7 +69,7 @@ export async function verifyUI(base){
     await page.getByRole('heading',{name:'Scans',exact:true}).waitFor();
     let result;
     for(let attempt=0;attempt<150;attempt++){
-      snapshot=await (await page.request.get(base+'/api/workspace')).json();
+      snapshot=await readWorkspace();
       result=snapshot.scans.find(s=>s.assetId===snapshot.projects[0].assets[0].id);
       if(result)break;
       const failed=snapshot.jobs.find(j=>j.status==='failed');
@@ -86,14 +97,14 @@ export async function verifyUI(base){
       await page.getByText('Risk updated. Changes are saved across this target’s scan history.',{exact:true}).waitFor();
       await page.getByRole('button',{name:'In progress',exact:true}).click();
       await page.waitForTimeout(1000);
-      snapshot=await (await page.request.get(base+'/api/workspace')).json();
+      snapshot=await readWorkspace();
       const assigned=snapshot.scans.flatMap(s=>s.findings).find(f=>f.owner==='Platform QA');
       assert.equal(assigned.workflowStatus,'in_progress');
       assert.ok(assigned.notes.includes('Review evidence'));
       await page.getByRole('button',{name:'Retest finding',exact:true}).click();
       let verified=false;
       for(let attempt=0;attempt<150;attempt++){
-        snapshot=await (await page.request.get(base+'/api/workspace')).json();
+        snapshot=await readWorkspace();
         const original=snapshot.scans.find(s=>s.id===result.id)?.findings.find(f=>f.fingerprint===assigned.fingerprint);
         if(original?.retests?.length){assert.ok(['still_present','resolved','inconclusive'].includes(original.retests.at(-1).status));verified=true;break;}
         await new Promise(resolve=>setTimeout(resolve,4000));
@@ -112,11 +123,11 @@ export async function verifyUI(base){
     await page.getByRole('checkbox').check();
     await page.getByRole('button',{name:'Save schedule',exact:true}).click();
     await page.getByRole('button',{name:'Stop schedule',exact:true}).waitFor();
-    snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    snapshot=await readWorkspace();
     assert.equal(snapshot.projects[0].assets[0].schedule,'daily');
     await page.getByRole('button',{name:'Stop schedule',exact:true}).click();
     await page.getByText('Not scheduled',{exact:true}).waitFor();
-    snapshot=await (await page.request.get(base+'/api/workspace')).json();
+    snapshot=await readWorkspace();
     assert.equal(snapshot.projects[0].assets[0].schedule,'manual');
     console.log('CUSTOMER_JOURNEY_PASS','real scan, target history, scan details, risk ownership/status persistence, real retest outcome, schedule create/stop, PDF/HTML/CSV coverage reports');
     await page.locator('nav').getByRole('button',{name:/Settings/}).click();
