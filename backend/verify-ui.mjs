@@ -52,7 +52,7 @@ export async function verifyUI(base){
     await page.getByRole('heading',{name:'Choose what you want to test',exact:true}).waitFor();
     console.log('SCAN_SELECTOR_DIAGNOSTIC',JSON.stringify(await page.locator('.scanModal select').evaluateAll(items=>items.map(item=>({label:item.getAttribute('aria-label'),value:item.value,options:[...item.options].map(o=>({text:o.textContent,value:o.value,selected:o.selected}))})))));
     assert.equal(await page.locator('.scanModal select').first().inputValue(),snapshot.projects[0].assets[0].id,'scan wizard preselects saved target');
-    await page.getByRole('button',{name:/Web App Scan/}).click();
+    await page.getByRole('dialog',{name:'New scan',exact:true}).getByRole('button',{name:/Web App Scan/}).click();
     await page.getByRole('checkbox').check();
     await page.getByRole('button',{name:'Start Scan',exact:true}).click();
     await page.getByRole('heading',{name:'Scans',exact:true}).waitFor();
@@ -70,7 +70,7 @@ export async function verifyUI(base){
     await page.locator('nav').getByRole('button',{name:/Targets/}).click();
     await page.getByRole('button',{name:/Inspector QA target/}).click();
     await page.getByRole('dialog',{name:'Target details'}).waitFor();
-    await page.getByRole('button',{name:/Web App Scan/}).click();
+    await page.getByRole('dialog',{name:'Target details'}).getByRole('button',{name:/Web App Scan/}).click();
     await page.getByRole('dialog',{name:'Scan details'}).waitFor();
     await page.getByRole('heading',{name:'Coverage and limitations'}).waitFor();
     const pdfLink=await page.getByRole('link',{name:'Download scan report'}).getAttribute('href');
@@ -107,7 +107,7 @@ export async function verifyUI(base){
     }
     await page.locator('nav').getByRole('button',{name:/Scans/}).click();
     await page.getByRole('button',{name:'＋ New Scan',exact:true}).click();
-    await page.getByRole('button',{name:/Web App Scan/}).click();
+    await page.getByRole('dialog',{name:'New scan',exact:true}).getByRole('button',{name:/Web App Scan/}).click();
     await page.getByLabel('When to run',{exact:true}).selectOption('daily');
     await page.getByRole('checkbox').check();
     await page.getByRole('button',{name:'Save schedule',exact:true}).click();
