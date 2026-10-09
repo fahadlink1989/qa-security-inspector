@@ -17,3 +17,9 @@ assert.equal(rerun.findings[0].workflowStatus,'accepted');
 assert.equal(rerun.findings[0].firstSeen,'2026-01-01');
 assert.equal(carryRiskLifecycle(scan('new','one'),{findings:[{...f,workflowStatus:'resolved'}]}).findings[0].workflowStatus,'open');
 console.log('Rescan lifecycle regression checks passed');
+
+const retained=currentRiskRows([scan('new','one',{completedAt:'2026-10-10',status:'completed_with_gaps',findings:[]}),scan('old','one')],{});
+assert.equal(retained.length,1,'incomplete scan must not erase prior risks');
+assert.equal(retained[0].coverageUnverified,true);
+assert.equal(currentRiskRows([scan('new','one',{completedAt:'2026-10-10',findings:[]}),scan('old','one')],{}).length,0);
+console.log('Incomplete scan risk retention passed');

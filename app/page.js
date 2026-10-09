@@ -719,6 +719,7 @@ export default function Home(){
           <aside className="riskDrawer">
             <div className="drawerTop"><div><Sev value={selectedRisk.severity}/><Badge tone="blue">{selectedRisk.engine||selectedRisk.category}</Badge></div><button onClick={()=>setSelectedRisk(null)}>×</button></div>
             <h2>{selectedRisk.title}</h2>
+            {selectedRisk.coverageUnverified?<p className="muted">Retained from an earlier scan: the latest scan had incomplete coverage and could not verify this risk.</p>:null}
             <p className="lead">{selectedRisk.summary}</p>
             <section><h3>Detection details</h3><p>First seen: {fmt(selectedRisk.firstSeen||selectedRisk._scan?.completedAt||selectedRisk._scan?.scannedAt)} · Last seen: {fmt(selectedRisk.lastSeen||selectedRisk._scan?.completedAt||selectedRisk._scan?.scannedAt)}</p>{selectedRisk.cve?<p>CVE: {String(selectedRisk.cve)}</p>:null}{selectedRisk.cwe?<p>CWE: {String(selectedRisk.cwe)}</p>:null}{selectedRisk.cvss!=null?<p>CVSS: {typeof selectedRisk.cvss==='object'?JSON.stringify(selectedRisk.cvss):String(selectedRisk.cvss)}</p>:null}</section>
             <section><h3>Why it matters</h3><p>{selectedRisk.impact||'Review the evidence and affected location to understand the potential security impact.'}</p></section>
