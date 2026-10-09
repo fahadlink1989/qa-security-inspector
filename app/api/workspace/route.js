@@ -1,7 +1,7 @@
 import { database } from '../../../lib/backend/db';
 import { workspaceContext } from '../../../lib/backend/context';
 import { withWorkspace } from '../../../lib/backend/auth';
-import { applyWorkflow } from '../../../lib/riskModel.mjs';
+import { applyWorkflow, updateRiskDetails } from '../../../lib/riskModel.mjs';
 import crypto from 'node:crypto';
 import net from 'node:net';
 import { latestScanForProject, makeProject, mutateState, readState } from '../../../lib/store';
@@ -81,6 +81,7 @@ async function updateProject(projectId, patch) {
 async function addAsset(projectId, input) {
   let asset = null;
   const url = new URL(String(input.url || '').trim());
+  if (url.username||url.password) throw new Error('Do not include credentials in a target URL.');
   if (!['http:','https:'].includes(url.protocol)) throw new Error('Only HTTP(S) assets are supported.');
 
   await mutateState((state) => {
@@ -256,7 +257,9 @@ async function handlePOST(request) {
     const body = await request.json();
     let result;
 
-    if (body.action === 'create_project') {
+    if (body.action === 'risk_details') {
+      await mutateState(state=>{result=updateRiskDetails(state,body,workspaceContext().userId);return state;});
+    } else if (body.action === 'create_project') {
       if (!body.url) throw new Error('Project URL is required.');
       result = await createProject(body);
     } else if (body.action === 'update_project') {

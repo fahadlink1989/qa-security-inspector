@@ -52,7 +52,50 @@ export async function verifyUI(base){
     await page.getByRole('heading',{name:'Choose what you want to test',exact:true}).waitFor();
     console.log('SCAN_SELECTOR_DIAGNOSTIC',JSON.stringify(await page.locator('.scanModal select').evaluateAll(items=>items.map(item=>({label:item.getAttribute('aria-label'),value:item.value,options:[...item.options].map(o=>({text:o.textContent,value:o.value,selected:o.selected}))})))));
     assert.equal(await page.locator('.scanModal select').first().inputValue(),snapshot.projects[0].assets[0].id,'scan wizard preselects saved target');
-    await page.getByRole('button',{name:'Cancel',exact:true}).click();
+    await page.getByRole('button',{name:/Web App Scan/}).click();
+    await page.getByRole('checkbox').check();
+    await page.getByRole('button',{name:'Start Scan',exact:true}).click();
+    await page.getByRole('heading',{name:'Scans',exact:true}).waitFor();
+    let result;
+    for(let attempt=0;attempt<150;attempt++){
+      snapshot=await (await page.request.get(base+'/api/workspace')).json();
+      result=snapshot.scans.find(s=>s.assetId===snapshot.projects[0].assets[0].id);
+      if(result)break;
+      const failed=snapshot.jobs.find(j=>j.status==='failed');
+      if(failed)throw new Error('Real scan failed: '+failed.error);
+      await new Promise(resolve=>setTimeout(resolve,4000));
+    }
+    assert.ok(result,'real authorized scan must produce a persisted result');
+    await page.reload({waitUntil:'networkidle'});
+    await page.locator('nav').getByRole('button',{name:/Targets/}).click();
+    await page.getByRole('button',{name:/Inspector QA target/}).click();
+    await page.getByRole('dialog',{name:'Target details'}).waitFor();
+    await page.getByRole('button',{name:/Web App Scan/}).click();
+    await page.getByRole('dialog',{name:'Scan details'}).waitFor();
+    await page.getByRole('heading',{name:'Coverage and limitations'}).waitFor();
+    const pdfLink=await page.getByRole('link',{name:'Download scan report'}).getAttribute('href');
+    const pdf=await page.request.get(base+pdfLink);assert.equal(pdf.status(),200);assert.equal((await pdf.body()).subarray(0,4).toString(),'%PDF');
+    await page.getByRole('button',{name:'Close scan details'}).click();
+    if(result.findings.length){
+      await page.locator('nav').getByRole('button',{name:/Risks/}).click();
+      await page.getByRole('button',{name:'Review',exact:true}).first().click();
+      await page.getByLabel('Owner or team',{exact:true}).fill('Platform QA');
+      await page.getByLabel('Remediation notes',{exact:true}).fill('Review evidence and verify the deployed fix.');
+      await page.getByRole('button',{name:'Save remediation details'}).click();
+      await page.getByText('Risk updated. Changes are saved across this target’s scan history.',{exact:true}).waitFor();
+      await page.getByRole('button',{name:'In progress',exact:true}).click();
+      await page.waitForTimeout(1000);
+      snapshot=await (await page.request.get(base+'/api/workspace')).json();
+      const assigned=snapshot.scans.flatMap(s=>s.findings).find(f=>f.owner==='Platform QA');
+      assert.equal(assigned.workflowStatus,'in_progress');
+      assert.ok(assigned.notes.includes('Review evidence'));
+      await page.reload({waitUntil:'networkidle'});
+    }
+    for(const format of ['html','csv']){
+      const report=await page.request.get(base+'/api/report?'+new URLSearchParams({projectId:snapshot.projects[0].id,format,section:'technical'}));
+      assert.equal(report.status(),200);assert.ok((await report.text()).includes('Point-in-time assessment'));
+    }
+    console.log('CUSTOMER_JOURNEY_PASS','real scan, target history, scan details, risk ownership/status persistence, PDF/HTML/CSV coverage reports');
     await page.locator('nav').getByRole('button',{name:/Settings/}).click();
     await page.getByRole('button',{name:'Sign out',exact:true}).click();
     await page.waitForURL(base+'/login');

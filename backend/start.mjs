@@ -27,5 +27,5 @@ if(process.env.VERIFY_BACKEND==='1') {
   try{await (await import('./verify.mjs')).verifyBackend(`http://127.0.0.1:${port}`);}
   catch(error){console.error('BACKEND_VERIFICATION_FAILED',error.message);}
 }
-if(process.env.VERIFY_UI_URL){try{await (await import('./verify-ui.mjs')).verifyUI(process.env.VERIFY_UI_URL);}catch(error){console.error('BROWSER_VERIFICATION_FAILED',error.message);}}
 consume();schedule();
+if(process.env.VERIFY_UI_URL){try{await (await import('./verify-ui.mjs')).verifyUI(process.env.VERIFY_UI_URL);}catch(error){console.error('BROWSER_VERIFICATION_FAILED',error.message);}}
