@@ -65,7 +65,7 @@ export async function verifyBackend(base) {
       check(report.status===200,'report export reads persisted scan');
       const saved=(await request('/api/workspace',null,a.cookie)).data.scans.find(s=>s.id===scan.data.id);
       check(saved?.engineRuns?.some(e=>e.engine==='zap'&&e.status==='completed'),'ZAP produces real results');
-      console.log('BACKEND_REAL_SCAN',JSON.stringify({status:completed.status,findings:completed.findings,engines:saved.engineRuns.map(e=>({engine:e.engine,status:e.status}))}));
+      console.log('BACKEND_REAL_SCAN',JSON.stringify({status:completed.status,findings:completed.findings,coverageGaps:saved.coverageGaps,browserError:saved.evidence?.browser?.error,engines:saved.engineRuns.map(e=>({engine:e.engine,status:e.status}))}));
     }
     await request('/api/account',{action:'logout'},a.cookie);
     check((await request('/api/workspace',null,a.cookie)).status===401,'logout revokes session');

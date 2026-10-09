@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import pg from 'pg';
+import chromium from '@sparticuz/chromium';
+import { chromium as playwright } from 'playwright-core';
+export async function verifyUI(base){
+  const email='qa-ui-'+crypto.randomUUID()+'@example.test';
+  const password=crypto.randomBytes(24).toString('base64url');
+  const db=new pg.Client({connectionString:process.env.DATABASE_URL});await db.connect();
+  let browser;
+  try {
+    browser=await playwright.launch({args:chromium.args,executablePath:await chromium.executablePath(),headless:true});
+    const page=await browser.newPage();
+    await page.goto(base+'/login',{waitUntil:'networkidle',timeout:60000});
+    await page.getByRole('button',{name:'Create a new workspace',exact:true}).click();
+    await page.getByLabel('Workspace name').fill('UI verification');
+    await page.getByLabel('Email',{exact:true}).fill(email);
+    await page.getByLabel('Password',{exact:true}).fill(password);
+    await page.getByRole('button',{name:'Create workspace',exact:true}).click();
+    await page.waitForURL(base+'/',{timeout:30000});
+    await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
+    const workspace=await page.request.get(base+'/api/workspace');
+    assert.equal(workspace.status(),200);assert.equal((await workspace.json()).projects.length,0);
+    await page.getByRole('button',{name:'Skip',exact:true}).click();
+    await page.locator('nav').getByRole('button',{name:/Settings/}).click();
+    await page.getByRole('button',{name:'Sign out',exact:true}).click();
+    await page.waitForURL(base+'/login');
+    await page.getByLabel('Email',{exact:true}).fill(email);
+    await page.getByLabel('Password',{exact:true}).fill(password);
+    await page.getByRole('button',{name:'Sign in',exact:true}).click();
+    await page.waitForURL(base+'/',{timeout:30000});
+    await page.getByRole('heading',{name:'Dashboard',exact:true}).waitFor();
+    console.log('BROWSER_VERIFICATION_PASS',new URL(base).hostname,'signup, private dashboard, logout, login');
+  }finally{
+    await browser?.close();
+    const users=await db.query('SELECT id FROM inspector_users WHERE email=$1',[email]);
+    for(const user of users.rows){
+      const memberships=await db.query('SELECT workspace_id FROM inspector_memberships WHERE user_id=$1',[user.id]);
+      await db.query('BEGIN');
+      try{
+        await db.query('DELETE FROM inspector_sessions WHERE user_id=$1',[user.id]);
+        await db.query('DELETE FROM inspector_memberships WHERE user_id=$1',[user.id]);
+        await db.query('DELETE FROM inspector_users WHERE id=$1',[user.id]);
+        for(const membership of memberships.rows) await db.query('DELETE FROM inspector_workspaces WHERE id=$1',[membership.workspace_id]);
+        await db.query('COMMIT');
+      }catch(error){await db.query('ROLLBACK');throw error;}
+    }
+    await db.end();
+  }
+}

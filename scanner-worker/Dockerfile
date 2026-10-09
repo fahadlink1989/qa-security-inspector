@@ -9,10 +9,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install pinned-by-build open-source scanner binaries from official GitHub releases.
 # Override the build args for reproducible production releases after validation.
-ARG NUCLEI_VERSION=latest
-ARG TRIVY_VERSION=latest
-ARG GITLEAKS_VERSION=latest
-ARG NAABU_VERSION=latest
+ARG NUCLEI_VERSION=v3.11.1
+ARG TRIVY_VERSION=v0.75.0
+ARG GITLEAKS_VERSION=v8.30.1
+ARG NAABU_VERSION=v2.6.1
 
 RUN set -eux; \
   arch="$(dpkg --print-architecture)"; \
@@ -43,6 +43,7 @@ COPY templates /app/templates
 ENV NUCLEI_TEMPLATES=/app/templates
 
 USER node
+RUN nuclei -version && trivy --version && gitleaks version && naabu -version && nuclei -validate -t /app/templates
 EXPOSE 8080
 CMD ["node","server.js"]
 

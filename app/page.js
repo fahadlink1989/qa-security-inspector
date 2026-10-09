@@ -512,6 +512,11 @@ export default function Home(){
                   <span>{fmt(job.createdAt)}</span>
                   <span className="pendingText">Scanning…</span>
                 </div>)}
+                {(data.jobs||[]).filter(job=>job.projectId===selectedProjectId&&job.status==='failed'&&!scanRows.some(scan=>scan.id===job.scanId)).map(job=><div className="tableRow scanGrid" key={job.id}>
+                  <div><strong>{job.scanType}</strong><small>{job.error||'Scan failed'}</small></div><span>{job.target}</span>
+                  <Badge tone="danger">Failed after {job.attempts||1} attempt(s)</Badge><span>{fmt(job.completedAt)}</span>
+                  <button className="secondaryBtn" onClick={()=>openNewScan(job.assetId)}>New scan</button>
+                </div>)}
                 {scanRows.map(scan=><div className="tableRow scanGrid" key={scan.id}>
                   <div className="targetName"><span className="expand">›</span><div><strong>{scanLabel(scan)}</strong><small>{scan.trigger||scan._kind||'manual'}</small>{scan.engineRuns?.length?<div className="engineChips">{scan.engineRuns.map(run=><span key={run.engine} className={'engineChip '+run.status}>{run.name||run.engine} · {run.status}</span>)}</div>:null}</div></div>
                   <span>{scan.finalUrl||scan.url||scan.target||scan.repository?.url||'Repository scan'}</span>
