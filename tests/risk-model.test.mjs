@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import {currentRiskRows,retestOutcome,applyWorkflow,carryRiskLifecycle} from '../lib/riskModel.mjs';
+import {currentRiskRows,retestOutcome,applyWorkflow,carryRiskLifecycle,coverageState,updateRiskDetails} from '../lib/riskModel.mjs';
 const f={fingerprint:'shared-rule',severity:'High'};
 const scan=(id,assetId,extra={})=>({id,assetId,projectId:'p',status:'completed',completedAt:'2026-10-09',findings:[{...f}],...extra});
 assert.equal(currentRiskRows([scan('a','one'),scan('b','two')],{}).length,2,'same rule on two targets stays distinct');
@@ -23,3 +23,14 @@ assert.equal(retained.length,1,'incomplete scan must not erase prior risks');
 assert.equal(retained[0].coverageUnverified,true);
 assert.equal(currentRiskRows([scan('new','one',{completedAt:'2026-10-10',findings:[]}),scan('old','one')],{}).length,0);
 console.log('Incomplete scan risk retention passed');
+
+const state={projects:[{id:'p'}],scans:[scan('new','one'),scan('old','one'),scan('other','two')]};
+updateRiskDetails(state,{projectId:'p',kind:'web',scanId:'new',fingerprint:'shared-rule',owner:'Platform',notes:'Ticket SEC-12',status:'in_progress'},'u');
+assert.equal(state.scans[1].findings[0].owner,'Platform');
+assert.equal(state.scans[2].findings[0].owner,undefined,'workflow must not cross targets');
+assert.throws(()=>updateRiskDetails(state,{projectId:'different',kind:'web',scanId:'new'},'u'));
+assert.equal(carryRiskLifecycle(scan('next','one'),state.scans[0]).findings[0].notes,'Ticket SEC-12');
+assert.equal(coverageState(scan('a','one',{engineRuns:[{engine:'zap',status:'failed'}]})).complete,false);
+const closed=scan('old','one',{findings:[{...f,workflowStatus:'resolved',retests:[{status:'resolved'}]}]});
+assert.equal(currentRiskRows([scan('new','one',{completedAt:'2026-10-10',findings:[]}),closed],{})[0].workflowStatus,'resolved');
+console.log('Owner scope, persistence, coverage and verified closure checks passed');
