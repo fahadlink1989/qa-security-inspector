@@ -28,6 +28,7 @@ export async function verifyPerformance(base){
     for(let i=0;i<100;i++){state=await read();run=state.projects[0].performanceScans?.[0];if(run)break;await new Promise(r=>setTimeout(r,4000));}
     assert.ok(run,'real provider result must persist');assert.deepEqual(Object.keys(run.devices).sort(),['desktop','mobile']);
     for(const d of Object.values(run.devices)){if(d.status==='completed'){assert.equal(d.provider,'Google PageSpeed Insights');assert.ok(Number.isFinite(d.score));}else{assert.equal(d.score,undefined);assert.ok(d.error);}}
+    console.log('PAGESPEED_PROVIDER_RESULT',JSON.stringify(Object.fromEntries(Object.entries(run.devices).map(([k,d])=>[k,{status:d.status,score:d.score??null,httpStatus:d.httpStatus??null}]))));
     await page.reload({waitUntil:'networkidle'});await page.locator('nav').getByRole('button',{name:/Targets/}).click();await page.getByRole('button',{name:'Speed',exact:true}).click();await page.getByRole('button',{name:'Desktop',exact:true}).click();await page.getByLabel('Measurement history',{exact:true}).waitFor();
     console.log('PERFORMANCE_QA_PASS',JSON.stringify({status:run.status,devices:Object.fromEntries(Object.entries(run.devices).map(([k,d])=>[k,{status:d.status,score:d.score??null,httpStatus:d.httpStatus??null}])),authorization:true,keyEncryptedAndRedacted:true,persistence:true,browser:true}));
   }finally{
