@@ -1,3 +1,4 @@
+import { carryRiskLifecycle } from '../../../lib/riskModel.mjs';
 import { waitUntil } from '@vercel/functions';
 import { createTaskJob, executeTaskJob } from '../../../lib/jobs';
 import { mutateState, readState } from '../../../lib/store';
@@ -73,6 +74,7 @@ export async function POST(request) {
       await mutateState((next) => {
         const target = next.projects.find((item) => item.id === project.id);
         if (!target) throw new Error('Project not found.');
+        carryRiskLifecycle(authScan,(target.authScans||[]).find(item=>item.assetId===authScan.assetId&&item.auth?.method===authScan.auth?.method));
         target.authScans = [authScan, ...(target.authScans || [])].slice(0, 10);
         return next;
       });

@@ -1,4 +1,5 @@
 'use client';
+import { currentRiskRows } from '../lib/riskModel.mjs';
 
 import { useEffect, useMemo, useState } from 'react';
 
@@ -130,29 +131,7 @@ export default function Home(){
     return map;
   },[scans]);
 
-  const currentRisks=useMemo(()=>{
-    const rows=[];
-    for(const scan of latestByAsset.values()){
-      for(const finding of scan.findings||[]) rows.push({...finding,_scanId:scan.id,_scan:scan});
-    }
-    const auth=project?.authScans?.[0];
-    for(const finding of auth?.findings||[]) rows.push({...finding,_authScanId:auth.id,_auth:true,_scan:auth});
-    const code=project?.codeScans?.[0];
-    for(const finding of code?.findings||[]) rows.push({...finding,_code:true,_scan:code});
-    const latestNetworks=new Map();
-    for(const scan of project?.networkScans||[]){
-      if(!latestNetworks.has(scan.networkTargetId)) latestNetworks.set(scan.networkTargetId,scan);
-    }
-    for(const networkScan of latestNetworks.values()){
-      for(const finding of networkScan.findings||[]) rows.push({...finding,_network:true,_networkScanId:networkScan.id,_scan:networkScan});
-    }
-    const unique=new Map();
-    for(const row of rows){
-      const key=row.fingerprint||row.id;
-      if(!unique.has(key) || (severityOrder[row.severity]||0)>(severityOrder[unique.get(key)?.severity]||0)) unique.set(key,row);
-    }
-    return [...unique.values()].sort((a,b)=>(severityOrder[b.severity]||0)-(severityOrder[a.severity]||0));
-  },[latestByAsset,project]);
+  const currentRisks=useMemo(()=>currentRiskRows(scans,project),[scans,project]);
 
   const filteredRisks=useMemo(()=>currentRisks.filter(r=>{
     if(riskSeverity!=='All' && r.severity!==riskSeverity) return false;
@@ -321,7 +300,9 @@ export default function Home(){
 
   async function updateRiskStatus(risk,status){
     try{
-      if(risk._auth){
+      if(risk._code){
+        await workspaceAction({action:'code_finding_status',projectId:project.id,codeScanId:risk._codeScanId,fingerprint:risk.fingerprint||risk.id,status});
+      }else if(risk._auth){
         await workspaceAction({action:'auth_finding_status',projectId:project.id,authScanId:risk._authScanId,fingerprint:risk.fingerprint,status});
       }else if(risk._network){
         await workspaceAction({action:'network_finding_status',projectId:project.id,networkScanId:risk._networkScanId,fingerprint:risk.fingerprint,status});
@@ -341,7 +322,7 @@ export default function Home(){
     try{
       const result=await workspaceAction({action:'retest_finding',scanId:selectedRisk._scanId,fingerprint:selectedRisk.fingerprint});
       await load(project.id);
-      setNotice(result.status==='resolved'?'Retest passed — this risk is no longer present.':'Retest completed — the risk is still present.');
+      setNotice(result.status==='inconclusive'?'Retest inconclusive — scanner coverage was incomplete. The risk remains unchanged.':result.status==='resolved'?'Retest passed — this risk is no longer present.':'Retest completed — the risk is still present.');
       if(result.currentFinding) setSelectedRisk({...result.currentFinding,_scanId:result.scan.id,_scan:result.scan});
       else setSelectedRisk(null);
     }catch(error){setNotice(error.message);}
@@ -562,7 +543,7 @@ export default function Home(){
             </div>
             <div className="dataCard">
               <div className="tableHeader riskGrid"><span>Threat</span><span>Vulnerability</span><span>Target</span><span>Detected</span><span>Status</span><span/></div>
-              {filteredRisks.map(r=><div className="tableRow riskGrid riskTableRow" key={(r.fingerprint||r.id)+(r._scanId||r._authScanId||'')}>
+              {filteredRisks.map(r=><div className="tableRow riskGrid riskTableRow" key={r._riskKey}>
                 <span className={'threatBars '+String(r.severity).toLowerCase()}><i/><i/><i/><i/></span>
                 <button className="riskTitle" onClick={()=>setSelectedRisk(r)}><small>{r.engine||r.category}</small><strong>{r.title}</strong>{r.checkId?<Badge tone="blue">{r.checkId}</Badge>:null}</button>
                 <span>{r._scan?.finalUrl||r.location||project?.assets?.[0]?.url}</span>
@@ -678,12 +659,8 @@ export default function Home(){
                   <h2>Scanner stack</h2>
                   <p className="muted">Inspector normalizes results behind one risk model. Heavy open-source scanners should run in isolated container workers, not in the web application.</p>
                   <div className="engineRows">
-                    <div><strong>Playwright + axe-core</strong><span>Rendered browser QA and accessibility</span><Badge tone="success">Connected</Badge></div>
-                    <div><strong>OWASP ZAP</strong><span>Web application DAST / passive baseline</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
-                    <div><strong>Nuclei</strong><span>Template-driven vulnerability and exposure validation</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
-                    <div><strong>Naabu</strong><span>Rate-limited TCP port discovery</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
-                    <div><strong>Greenbone / OpenVAS</strong><span>Network vulnerability assessment</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
-                    <div><strong>Trivy + Gitleaks</strong><span>Dependencies, IaC, containers and secrets</span><Badge tone={engineStatus?.worker?.connected?'success':'neutral'}>{engineStatus?.worker?.connected?'Connected':'Worker unavailable'}</Badge></div>
+                    <div><strong>Playwright + axe-core</strong><span>Rendered browser QA and accessibility</span><Badge tone="neutral">Built in · verified during scans</Badge></div>
+                    {(engineStatus?.worker?.engines||[]).map(engine=><div key={engine.id}><strong>{engine.name}</strong><span>{engine.profile}</span><Badge tone={engine.available?'success':'neutral'}>{engine.available?'Available':'Unavailable'}</Badge></div>)}
                   </div>
                   <p className="muted small">Commercial licensing should be reviewed before redistributing third-party binaries. Nmap is intentionally not an embedded default.</p>
                 </section>
@@ -743,12 +720,13 @@ export default function Home(){
             <div className="drawerTop"><div><Sev value={selectedRisk.severity}/><Badge tone="blue">{selectedRisk.engine||selectedRisk.category}</Badge></div><button onClick={()=>setSelectedRisk(null)}>×</button></div>
             <h2>{selectedRisk.title}</h2>
             <p className="lead">{selectedRisk.summary}</p>
+            <section><h3>Detection details</h3><p>First seen: {fmt(selectedRisk.firstSeen||selectedRisk._scan?.completedAt||selectedRisk._scan?.scannedAt)} · Last seen: {fmt(selectedRisk.lastSeen||selectedRisk._scan?.completedAt||selectedRisk._scan?.scannedAt)}</p>{selectedRisk.cve?<p>CVE: {String(selectedRisk.cve)}</p>:null}{selectedRisk.cwe?<p>CWE: {String(selectedRisk.cwe)}</p>:null}{selectedRisk.cvss!=null?<p>CVSS: {typeof selectedRisk.cvss==='object'?JSON.stringify(selectedRisk.cvss):String(selectedRisk.cvss)}</p>:null}</section>
             <section><h3>Why it matters</h3><p>{selectedRisk.impact||'Review the evidence and affected location to understand the potential security impact.'}</p></section>
             <section><h3>Evidence</h3><pre>{selectedRisk.evidence||selectedRisk.location||'Evidence is available in the scan record.'}</pre></section>
             <section><h3>Recommended fix</h3><p>{selectedRisk.remediation||'Review the upstream advisory or application control and remove the underlying exposure.'}</p></section>
             {selectedRisk._scan?.remediationPlan?.findingGuidance?.[selectedRisk.fingerprint]?<section><h3>Implementation guidance</h3><ol>{(selectedRisk._scan.remediationPlan.findingGuidance[selectedRisk.fingerprint].steps||[]).map((s,i)=><li key={i}>{s}</li>)}</ol></section>:null}
             <section><h3>Workflow</h3><div className="workflowButtons">
-              {!selectedRisk._code?<><button onClick={()=>updateRiskStatus(selectedRisk,'open')}>Open</button><button onClick={()=>updateRiskStatus(selectedRisk,'in_progress')}>In progress</button><button onClick={()=>updateRiskStatus(selectedRisk,'resolved')}>Resolved</button><button onClick={()=>updateRiskStatus(selectedRisk,'accepted')}>Accept risk</button><button onClick={()=>updateRiskStatus(selectedRisk,'false_positive')}>False positive</button></>:null}
+              {<><button onClick={()=>updateRiskStatus(selectedRisk,'open')}>Open</button><button onClick={()=>updateRiskStatus(selectedRisk,'in_progress')}>In progress</button><button onClick={()=>updateRiskStatus(selectedRisk,'resolved')}>Resolved</button><button onClick={()=>updateRiskStatus(selectedRisk,'accepted')}>Accept risk</button><button onClick={()=>updateRiskStatus(selectedRisk,'false_positive')}>False positive</button></>}
               {selectedRisk._scanId?<button className="primaryBtn" disabled={retesting} onClick={retestRisk}>{retesting?'Retesting…':'Retest finding'}</button>:null}
             </div></section>
           </aside>
