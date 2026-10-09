@@ -79,7 +79,7 @@ export default function Home(){
       const id=preferredProjectId || selectedProjectId || json.projects?.[0]?.id || '';
       setSelectedProjectId(id);
       const p=json.projects?.find(x=>x.id===id);
-      if(p){
+      if(p&&!silent){
         setSettings({name:p.name,schedule:p.schedule||'manual',scheduledMode:p.scheduledMode||'standard',webhookUrl:''});
         setNewScan(prev=>({
           ...prev,
@@ -109,8 +109,8 @@ export default function Home(){
   );
 
   useEffect(()=>{
-    if(!activeJobs.length||!selectedProjectId) return;
-    const timer=setInterval(()=>load(selectedProjectId,true),2500);
+    if(!selectedProjectId) return;
+    const timer=setInterval(()=>load(selectedProjectId,true),activeJobs.length?2500:15000);
     return ()=>clearInterval(timer);
   },[activeJobs.length,selectedProjectId]);
 
