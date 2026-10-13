@@ -6,6 +6,7 @@ await db.connect();
 try {
   await db.query('BEGIN');await db.query('SELECT pg_advisory_xact_lock(7463821)');
   await db.query(await readFile(new URL('../migrations/001_backend.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/002_commercial.sql',import.meta.url),'utf8'));
   await db.query('COMMIT');
 }catch(error){await db.query('ROLLBACK');throw error;}finally{await db.end();}
 const port=process.env.PORT||'3000';
@@ -19,6 +20,7 @@ async function tick(schedule=false){
 async function consume(){
   while(!stopping){try{const response=await tick();if(!response.ok)console.error('Consumer request failed:',response.status);}catch{if(!stopping)console.error('Consumer reconnecting');}await sleep(2000);}
 }
+async function mail(){while(!stopping){try{await fetch(`http://127.0.0.1:${port}/api/internal/tick?mail=1`,{method:'POST',headers:{authorization:'Bearer '+process.env.INTERNAL_WORKER_SECRET},signal:AbortSignal.timeout(30000)});}catch{}await sleep(5000);}}
 async function schedule(){while(!stopping){try{await tick(true);}catch{}await sleep(60000);}}
 child.on('exit',code=>{stopping=true;process.exit(code||1);});
 for(const signal of ['SIGTERM','SIGINT'])process.on(signal,()=>{stopping=true;child.kill(signal);});
@@ -27,7 +29,8 @@ if(process.env.VERIFY_BACKEND==='1') {
   try{await (await import('./verify.mjs')).verifyBackend(`http://127.0.0.1:${port}`);}
   catch(error){console.error('BACKEND_VERIFICATION_FAILED',error.message);}
 }
-consume();schedule();
+consume();schedule();mail();
 if(process.env.VERIFY_UI_URL){try{await (await import('./verify-ui.mjs')).verifyUI(process.env.VERIFY_UI_URL);}catch(error){console.error('BROWSER_VERIFICATION_FAILED',error.message);}}
 
 if(process.env.VERIFY_PERFORMANCE_URL){try{await (await import('./verify-performance.mjs')).verifyPerformance(process.env.VERIFY_PERFORMANCE_URL);}catch(error){console.error('PERFORMANCE_QA_FAILED',error.message);}}
+

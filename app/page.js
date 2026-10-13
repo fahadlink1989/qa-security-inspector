@@ -1,4 +1,6 @@
 'use client';
+import CommercialSettings from './components/CommercialSettings';
+import HistoryBrowser from './components/HistoryBrowser';
 import TeamSettings from './components/TeamSettings';
 import PerformancePanel from './components/PerformancePanel';
 import { currentRiskRows, coverageState } from '../lib/riskModel.mjs';
@@ -125,6 +127,7 @@ export default function Home(){
 
   useEffect(()=>{
     load();
+    if(new URLSearchParams(window.location.search).get('settings')==='billing')setView('settings');
 
   },[]);
 
@@ -601,7 +604,7 @@ export default function Home(){
                   <span>{fmt(scan.completedAt||scan.startedAt)}</span>
                   <div className="riskDots">{scan._kind==='performance'?<span>Performance only</span>:<><span className="dot critical"/>{scan.summary?.critical||0}<span className="dot high"/>{scan.summary?.high||0}<span className="dot medium"/>{scan.summary?.medium||0}<span className="dot low"/>{scan.summary?.low||0}</>}</div>
                 </div>)}
-                {!scanRows.length?<div className="emptyRow">No completed scan results yet.</div>:null}
+                {!scanRows.length?<div className="emptyRow">No completed scan results yet.</div>:null}<HistoryBrowser workspaceId={data.workspace?.id} onOpen={openScanDetails}/>
               </div>
             ):(
               <div className="dataCard"><div className="blockHead"><h2>Recurring target scans</h2><button onClick={()=>openNewScan()}>Create schedule</button></div>{scopedProjects.flatMap(p=>(p.assets||[]).map(asset=>({...asset,_project:p}))).map(asset=>{const frequency=asset.schedule??asset._project.schedule;return <div className="historyItem" key={asset.id}><strong>{asset.label}</strong><span>{asset.url}</span><span>{['daily','weekly'].includes(frequency)?frequency+' · '+((asset.scheduledMode||asset._project?.scheduledMode||project?.scheduledMode)==='deep'?'Attack Surface Scan':'Web App Scan')+' · UTC periods':'Not scheduled'}</span>{['daily','weekly'].includes(frequency)?<button className="secondaryBtn" onClick={async()=>{try{await workspaceAction({action:'schedule_asset',projectId:asset._project.id,assetId:asset.id,frequency:'manual'});await load(project.id,true);setNotice('Schedule stopped for '+asset.label);}catch(error){setNotice(error.message);}}}>Stop schedule</button>:null}</div>})}{!scopedAssets.length?<div className="emptyRow">Add a target before scheduling scans.</div>:null}</div>
@@ -723,7 +726,7 @@ export default function Home(){
         {view==='settings'?(
           <section className="page">
             <header className="pageHeader"><div><h1>Settings</h1><p>Storage: {engineStatus?.orchestration?.storage||'checking'} · Scan consumer: {engineStatus?.orchestration?.consumerHealthy?'connected':'checking / unavailable'}</p><p>Monitoring, notifications and scanner platform configuration.</p><button className="secondaryBtn" onClick={()=>setView('networks')}>Internal network configuration</button></div></header>
-            <TeamSettings key={data.workspace?.id} workspaceId={data.workspace?.id} account={data.account}/>
+            <CommercialSettings key={'commercial-'+data.workspace?.id} workspaceId={data.workspace?.id} account={data.account}/><TeamSettings key={data.workspace?.id} workspaceId={data.workspace?.id} account={data.account}/>
             <form className="settingsCard performanceSettings" onSubmit={configurePageSpeed}><h2>Google PageSpeed Insights</h2><p>Measure mobile and desktop loading performance using Google’s real Lighthouse results.</p><p className="muted">{data.workspace?.performanceKeyConfigured?'API key configured.':'No API key configured. Unauthenticated requests may be quota-limited.'}</p><label>Google API key<input type="password" autoComplete="off" value={pageSpeedKey} onChange={e=>setPageSpeedKey(e.target.value)} placeholder="Paste a PageSpeed-enabled Google API key"/></label><p className="muted">Encrypted at rest and used only by the backend. Enable the PageSpeed Insights API in your Google Cloud project and restrict this key to that API.</p><a target="_blank" rel="noreferrer" href="https://developers.google.com/speed/docs/insights/v5/get-started">Google setup instructions ↗</a><div className="headerActions"><button className="primaryBtn" disabled={providerBusy||!pageSpeedKey}>Save API key</button><button type="button" className="secondaryBtn" disabled={providerBusy||!data.workspace?.performanceKeyConfigured} onClick={()=>configurePageSpeed(null,true)}>Remove workspace key</button></div>{providerMessage?<p role="status">{providerMessage}</p>:null}</form>
             {!project?<div className="emptyState"><h2>No targets in {data.workspace?.name} yet</h2><p>Your workspace is created. Add your first target to begin.</p><button className="primaryBtn" onClick={openAddTarget}>Add your first target</button></div>:(
               <div className="settingsGrid">
@@ -841,5 +844,6 @@ export default function Home(){
     </main>
   );
 }
+
 
 
