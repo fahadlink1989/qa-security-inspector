@@ -71,6 +71,8 @@ await inWorkspace(context,async()=>{
   await updateStoredRisk({kind:'web',projectId,scanId:'qa-history-2999',fingerprint:'risk-2999',status:'accepted',owner:'Platform'},'qa');
   check((await readState()).risks.find(r=>r.fingerprint==='risk-2999').workflowStatus==='accepted','Archived risk updates reach current projection');
   check((await getScan('web','qa-history-2999')).findings[0].owner==='Platform','Archived scan lookup and workflow persistence work');
+  await updateStoredRisk({kind:'web',projectId,scanId:'qa-history-2999',fingerprint:'risk-2999'},'verified-retest',{scanId:'qa-retest',status:'inconclusive',at:new Date().toISOString()});
+  check((await getScan('web','qa-history-2999')).findings[0].retests[0].status==='inconclusive','Retest evidence persists on archived observations');
   await saveScan('web',{id:'qa-new',projectId,status:'completed',completedAt:new Date().toISOString(),findings:[{fingerprint:'risk-2999',severity:'Low'}]});
   check((await getScan('web','qa-new')).findings[0].workflowStatus==='accepted','Rescan carries accepted decisions beyond recent history window');
   await updateStoredRisk({kind:'web',projectId,scanId:'qa-new',fingerprint:'risk-2999',status:'resolved'},'qa');

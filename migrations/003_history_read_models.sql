@@ -4,6 +4,8 @@ LANGUAGE sql IMMUTABLE AS $$
 $$;
 ALTER TABLE inspector_scan_history ADD COLUMN IF NOT EXISTS scope_key text GENERATED ALWAYS AS (inspector_scan_scope(kind,data)) STORED;
 CREATE INDEX IF NOT EXISTS inspector_history_scope ON inspector_scan_history(workspace_id,kind,scope_key,recorded_at DESC,id DESC);
+CREATE INDEX IF NOT EXISTS inspector_history_id ON inspector_scan_history(workspace_id,id);
+CREATE INDEX IF NOT EXISTS inspector_history_scope_lookup ON inspector_scan_history(workspace_id,kind,project_id,asset_id,recorded_at DESC);
 CREATE TABLE IF NOT EXISTS inspector_latest_scans (
  workspace_id uuid NOT NULL,kind text NOT NULL,scope_key text NOT NULL,profile text NOT NULL,
  scan_id text NOT NULL,recorded_at timestamptz NOT NULL,
