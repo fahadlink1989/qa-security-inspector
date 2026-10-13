@@ -1,3 +1,4 @@
+import {accountAction,newRecoveryCode,setRecoveryCode} from '../../../lib/backend/accountActions';
 import crypto from 'node:crypto';
 import { database, transaction } from '../../../lib/backend/db';
 import { COOKIE, checkOrigin, rateLimit, session, sessionToken } from '../../../lib/backend/auth';
@@ -14,6 +15,7 @@ export async function POST(request) {
   try {
     checkOrigin(request);
     const body=await request.json();
+    const handled=await accountAction(request,body);if(handled)return handled;
     if(['create_workspace','switch_workspace'].includes(body.action)) {
       const account=await session(request);
       if(!account)return Response.json({error:'Sign in to manage workspaces.'},{status:401});
@@ -50,9 +52,10 @@ export async function POST(request) {
     // Global cap also prevents attackers bypassing per-email limits with random addresses.
     await rateLimit('account:global',300,900);
     const token=crypto.randomBytes(32).toString('base64url');
-    let account;
+    let account,recoveryCode;
     if(body.action==='register') {
       const encoded=await passwordHash(password);
+      recoveryCode=newRecoveryCode();
       account=await transaction(async client=>{
         const userId=crypto.randomUUID(),workspaceId=crypto.randomUUID();
         const name=String(body.workspaceName||'Inspector Workspace').trim().slice(0,100)||'Inspector Workspace';
@@ -60,6 +63,7 @@ export async function POST(request) {
         await client.query('INSERT INTO inspector_workspaces(id,name,state) VALUES($1,$2,$3)',[workspaceId,name,JSON.stringify(initialState(workspaceId,name))]);
         await client.query("INSERT INTO inspector_memberships(workspace_id,user_id,role) VALUES($1,$2,'owner')",[workspaceId,userId]);
         await client.query("INSERT INTO inspector_sessions(token_hash,user_id,workspace_id,expires_at) VALUES($1,$2,$3,now()+interval '7 days')",[hashToken(token),userId,workspaceId]);
+        await setRecoveryCode(client,userId,recoveryCode);
         return {userId,workspaceId,email,name,role:'owner'};
       });
     } else if(body.action==='login') {
@@ -72,9 +76,10 @@ export async function POST(request) {
       await database().query("INSERT INTO inspector_sessions(token_hash,user_id,workspace_id,expires_at) VALUES($1,$2,$3,now()+interval '7 days')",[hashToken(token),user.id,user.workspace_id]);
       account={userId:user.id,workspaceId:user.workspace_id,email,name:user.name,role:user.role};
     } else return Response.json({error:'Unknown account action.'},{status:400});
-    return Response.json({account},{headers:{'set-cookie':cookie(token),'cache-control':'no-store'}});
+    return Response.json({account,recoveryCode},{headers:{'set-cookie':cookie(token),'cache-control':'no-store'}});
   } catch(error) {
     const status=error.status||(error.code==='23505'?409:503);
     return Response.json({error:error.status?error.message:error.code==='23505'?'An account already exists for this email. Sign in instead.':'Account service is unavailable.'},{status});
   }
 }
+

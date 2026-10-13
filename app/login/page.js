@@ -1,27 +1,20 @@
 'use client';
-import { useState } from 'react';
-export default function Login() {
-  const [register,setRegister]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false);
-  async function submit(event) {
-    event.preventDefault();setBusy(true);setError('');
-    const fields=Object.fromEntries(new FormData(event.currentTarget));
-    try {
-      const response=await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...fields,action:register?'register':'login'})});
-      const data=await response.json();if(!response.ok)throw new Error(data.error);
-      window.location.assign('/');
-    } catch(e){setError(e.message);} finally {setBusy(false);}
-  }
-  return <main style={{maxWidth:440,margin:'10vh auto',padding:28}}><h1>Inspector</h1>
-    <h2>{register?'Create your workspace':'Sign in to your workspace'}</h2>
-    <p>Your targets, scans, and risks are private to your workspace.</p>
-    <form onSubmit={submit} style={{display:'grid',gap:16}}>
-      {register&&<label>Workspace name<input name="workspaceName" required maxLength={100}/></label>}
-      <label>Email<input name="email" type="email" autoComplete="email" required maxLength={254}/></label>
-      <label>Password<input name="password" type="password" autoComplete={register?'new-password':'current-password'} required minLength={12} maxLength={128}/></label>
-      <small>Use at least 12 characters.</small>
-      {error&&<p role="alert">{error}</p>}
-      <button type="submit" disabled={busy}>{busy?'Please wait…':register?'Create workspace':'Sign in'}</button>
-    </form>
-    <button onClick={()=>{setRegister(!register);setError('');}} style={{marginTop:20}}>{register?'Already have an account? Sign in':'Create a new workspace'}</button>
-  </main>;
+import {useEffect,useState} from 'react';
+export default function Login(){
+  const [mode,setMode]=useState('login'),[error,setError]=useState(''),[busy,setBusy]=useState(false),[recovery,setRecovery]=useState(''),[saved,setSaved]=useState(false),[message,setMessage]=useState(''),[invite,setInvite]=useState(''),[account,setAccount]=useState(null);
+  useEffect(()=>{const token=new URLSearchParams(window.location.hash.slice(1)).get('invite');if(token){setInvite(token);setMode('invite');fetch('/api/account',{cache:'no-store'}).then(r=>r.json()).then(d=>setAccount(d.account)).catch(()=>{});}},[]);
+  async function submit(event){event.preventDefault();setBusy(true);setError('');setMessage('');const fields=Object.fromEntries(new FormData(event.currentTarget));try{const r=await fetch('/api/account',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({...fields,action:mode==='invite'?'accept_invitation':mode,token:invite})});const d=await r.json();if(!r.ok)throw new Error(d.error||'Request failed.');if(d.recoveryCode)setRecovery(d.recoveryCode);else if(mode==='recover'){setMode('login');setMessage(d.message);}else if(mode==='login'&&invite){setAccount(d.account);setMode('invite');setMessage('Signed in. Accept your invitation to continue.');}else window.location.assign('/');}catch(e){setError(e.message);}finally{setBusy(false);}}
+  const title=mode==='register'?'Create your workspace':mode==='recover'?'Recover your account':mode==='invite'?'Join your team':'Welcome back';
+  return <main className="authPage"><aside className="authIntro"><a href="/login" className="authBrand">Inspector<span>Security, with a clear next step.</span></a><h1>Find the issue.<br/>Understand the evidence.<br/>Verify the fix.</h1><p>Keep your targets, scan results and remediation work together in one private workspace.</p><ul><li>Run authorized website and repository checks</li><li>Give each risk an owner and a next action</li><li>Retest fixes and share evidence with your team</li></ul></aside><section className="authCard">
+  {recovery?<><span className="eyebrow">PROTECT YOUR ACCOUNT</span><h2>Save your recovery code</h2><p>If you forget your password, this code lets you recover your account. Store it somewhere safe, such as your password manager.</p><div className="secureValue"><code>{recovery}</code></div><p>Shown once. Anyone with this code and your email can reset your password. Inspector has no email recovery configured.</p><label className="authConfirm"><input type="checkbox" checked={saved} onChange={e=>setSaved(e.target.checked)}/> I saved my recovery code securely.</label><button className="primaryBtn" disabled={!saved} onClick={()=>window.location.assign('/')}>Continue to workspace</button></>:<><span className="eyebrow">YOUR INSPECTOR WORKSPACE</span><h2>{title}</h2><p>{mode==='recover'?'Use the one-time code you saved when creating your account or in Settings.':mode==='invite'?'Use the email address your workspace owner invited.':'Your targets, scans and risks stay within your workspace.'}</p>
+  <form className="accountForm" onSubmit={submit}>
+    {mode==='register'&&<label>Workspace name<input name="workspaceName" required maxLength={100} autoComplete="organization" placeholder="Company or client name"/></label>}
+    {mode==='invite'&&account?<p>Signed in as <strong>{account.email}</strong></p>:<><label>Email<input name="email" type="email" autoComplete="email" required maxLength={254}/></label>{mode==='recover'&&<label>Recovery code<input name="recoveryCode" autoComplete="off" required maxLength={128}/></label>}<label>{mode==='recover'?'New password':'Password'}<input name="password" type="password" autoComplete={mode==='login'?'current-password':'new-password'} required minLength={12} maxLength={128}/></label><small>Use 12–128 characters.</small></>}
+    {error&&<p className="formError" role="alert">{error}</p>}{message&&<p role="status">{message}</p>}
+    <button className="primaryBtn" disabled={busy}>{busy?'Please wait…':mode==='register'?'Create workspace':mode==='recover'?'Reset password':mode==='invite'?'Accept invitation':'Sign in'}</button>
+  </form>
+  <div className="authLinks">{mode==='login'?<><button onClick={()=>{setMode('recover');setError('');}}>Forgot password?</button><button onClick={()=>{setMode('register');setError('');}}>Create a new workspace</button></>:<button onClick={()=>{setMode('login');setError('');}}>Already have an account? Sign in</button>}{invite&&mode!=='invite'&&<button onClick={()=>setMode('invite')}>Back to invitation</button>}</div>
+  {mode==='recover'&&<p className="muted">No saved code? Automated recovery is unavailable. We cannot reset access without verifying ownership.</p>}
+  </>}
+  </section></main>;
 }

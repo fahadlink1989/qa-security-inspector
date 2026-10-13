@@ -3,7 +3,7 @@ import {currentRiskRows,retestOutcome,applyWorkflow,carryRiskLifecycle,coverageS
 const f={fingerprint:'shared-rule',severity:'High'};
 const scan=(id,assetId,extra={})=>({id,assetId,projectId:'p',status:'completed',completedAt:'2026-10-09',findings:[{...f}],...extra});
 assert.equal(currentRiskRows([scan('a','one'),scan('b','two')],{}).length,2,'same rule on two targets stays distinct');
-assert.equal(currentRiskRows([scan('a','one'),scan('b','one',{mode:'deep'})],{}).length,2,'web scan does not erase deep coverage');
+assert.equal(currentRiskRows([scan('a','one'),scan('b','one',{mode:'deep'})],{}).length,1,'same finding is unified across scan profiles');
 assert.equal(currentRiskRows([],{authScans:[scan('a','one'),scan('b','two')],codeScans:[scan('c',null,{repositoryUrl:'https://github.com/a/a'}),scan('d',null,{repositoryUrl:'https://github.com/a/b'})]}).length,4);
 assert.equal(retestOutcome({status:'completed_with_gaps',findings:[]},'shared-rule'),'inconclusive');
 assert.equal(retestOutcome({status:'completed',findings:[],engineRuns:[{status:'skipped'}]},'shared-rule'),'inconclusive');
@@ -21,7 +21,7 @@ console.log('Rescan lifecycle regression checks passed');
 const retained=currentRiskRows([scan('new','one',{completedAt:'2026-10-10',status:'completed_with_gaps',findings:[]}),scan('old','one')],{});
 assert.equal(retained.length,1,'incomplete scan must not erase prior risks');
 assert.equal(retained[0].coverageUnverified,true);
-assert.equal(currentRiskRows([scan('new','one',{completedAt:'2026-10-10',findings:[]}),scan('old','one')],{}).length,0);
+assert.equal(currentRiskRows([scan('new','one',{completedAt:'2026-10-10',findings:[]}),scan('old','one')],{}).length,1);
 console.log('Incomplete scan risk retention passed');
 
 const state={projects:[{id:'p'}],scans:[scan('new','one'),scan('old','one'),scan('other','two')]};
@@ -34,3 +34,4 @@ assert.equal(coverageState(scan('a','one',{engineRuns:[{engine:'zap',status:'fai
 const closed=scan('old','one',{findings:[{...f,workflowStatus:'resolved',retests:[{status:'resolved'}]}]});
 assert.equal(currentRiskRows([scan('new','one',{completedAt:'2026-10-10',findings:[]}),closed],{})[0].workflowStatus,'resolved');
 console.log('Owner scope, persistence, coverage and verified closure checks passed');
+
