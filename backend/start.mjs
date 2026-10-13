@@ -7,6 +7,7 @@ try {
   await db.query('BEGIN');await db.query('SELECT pg_advisory_xact_lock(7463821)');
   await db.query(await readFile(new URL('../migrations/001_backend.sql',import.meta.url),'utf8'));
   await db.query(await readFile(new URL('../migrations/002_commercial.sql',import.meta.url),'utf8'));
+  await db.query(await readFile(new URL('../migrations/003_history_read_models.sql',import.meta.url),'utf8'));
   await db.query('COMMIT');
 }catch(error){await db.query('ROLLBACK');throw error;}finally{await db.end();}
 const port=process.env.PORT||'3000';

@@ -13,7 +13,7 @@ async function handlePOST(request) {
       throw new Error('Authenticated Scan requires a bearer token or cookie header.');
     }
 
-    const state = await readState();
+    const state = await readState({history:false});
     const project = state.projects.find((item) => item.id === body.projectId);
     if (!project) throw new Error('Project not found.');
     const asset = project.assets.find((item) => item.id === body.assetId);
@@ -23,3 +23,4 @@ async function handlePOST(request) {
   }catch(error){return Response.json({error:error.message},{status:400});}
 }
 export const POST=withWorkspace(handlePOST);
+

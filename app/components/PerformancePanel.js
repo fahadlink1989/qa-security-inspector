@@ -1,5 +1,5 @@
 'use client';
-import {useState} from 'react';
+import {useState,useEffect} from 'react';
 function Metric({label,value}){return <div className="performanceMetric"><span>{label}</span><strong>{value??'Not available'}</strong></div>;}
 function FieldData({data}){
   const entries=Object.entries(data?.metrics||{});
@@ -8,8 +8,10 @@ function FieldData({data}){
 }
 export default function PerformancePanel({asset,runs,jobs,onRun,onClose,onSettings,initialRunId}){
   const [device,setDevice]=useState('mobile'),[runId,setRunId]=useState(initialRunId||''),[authorized,setAuthorized]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
-  const history=runs.filter(s=>s.assetId===asset.id).sort((a,b)=>String(b.completedAt).localeCompare(String(a.completedAt)));
-  const run=history.find(r=>r.id===runId)||history[0];
+  const [archived,setArchived]=useState(null);
+  useEffect(()=>{if(!initialRunId||runs.some(r=>r.id===initialRunId))return;let active=true;fetch('/api/history?'+new URLSearchParams({kind:'performance',id:initialRunId})).then(async r=>{const d=await r.json();if(!r.ok||!d.items[0])throw new Error(d.error||'Measurement not found');if(active)setArchived(d.items[0]);}).catch(e=>{if(active)setError(e.message);});return ()=>{active=false;};},[initialRunId,runs]);
+  const history=[...(archived&&!runs.some(r=>r.id===archived.id)?[archived]:[]),...runs].filter(s=>s.assetId===asset.id).sort((a,b)=>String(b.completedAt).localeCompare(String(a.completedAt)));
+  const run=runId?history.find(r=>r.id===runId):history[0];
   const result=run?.devices?.[device];
   const job=jobs.find(j=>j.type==='performance'&&j.assetId===asset.id&&['queued','running'].includes(j.status));
   const submit=async()=>{setBusy(true);setError('');try{await onRun(asset.id);setRunId('');setAuthorized(false);}catch(e){setError(e.message);}finally{setBusy(false);}};
@@ -33,4 +35,5 @@ export default function PerformancePanel({asset,runs,jobs,onRun,onClose,onSettin
     <div className="modalFoot">{run?<button className="secondaryBtn" onClick={download}>Download measurement JSON</button>:null}<a className="secondaryBtn" target="_blank" rel="noreferrer" href={'https://pagespeed.web.dev/analysis?'+new URLSearchParams({url:asset.url,form_factor:device})}>Open Google PageSpeed ↗</a><button className="primaryBtn" onClick={onClose}>Done</button></div>
   </section></div>;
 }
+
 
