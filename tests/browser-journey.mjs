@@ -25,8 +25,12 @@ try{
  await page.getByRole('button',{name:/Settings/}).first().click();
  await page.getByRole('heading',{name:'Workspace team',exact:true}).waitFor();
  await page.getByRole('heading',{name:'Account security',exact:true}).waitFor();
+ await page.getByRole('heading',{name:'Billing & usage',exact:true}).waitFor();
+ await page.getByText('Checkout is unavailable until the platform operator connects Stripe. No payment has been taken.',{exact:true}).waitFor();
+ assert.ok(await page.getByRole('button',{name:'Open test checkout',exact:true}).isDisabled());
+ assert.ok(await page.getByRole('checkbox',{name:/Send invitation by email/}).isDisabled());
  await page.getByLabel('Email',{exact:true}).fill('qa-invite@example.invalid');
- await page.getByRole('button',{name:'Create invitation link',exact:true}).click();
+ await page.getByRole('button',{name:'Create invitation',exact:true}).click();
  await page.getByLabel('Invitation link',{exact:true}).waitFor();
  assert.match(await page.getByLabel('Invitation link').inputValue(),/\/login#invite=/);
  await page.screenshot({path:'/tmp/inspector-settings-qa.png',fullPage:true});
@@ -36,5 +40,11 @@ try{
  await page.setViewportSize({width:390,height:844});
  assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth),'login has no horizontal overflow');
  await page.screenshot({path:'/tmp/inspector-login-mobile-qa.png',fullPage:true});
+ await page.getByRole('button',{name:'Forgot password?',exact:true}).click();
+ await page.getByRole('button',{name:'Send a password reset email',exact:true}).click();
+ await page.getByLabel('Email',{exact:true}).fill('qa-ui@example.invalid');
+ await page.getByRole('button',{name:'Send reset email',exact:true}).click();
+ await page.getByRole('alert').filter({hasText:'Email recovery is not configured'}).waitFor();
  assert.deepEqual(errors,[]);console.log('PASS: browser signup, recovery save, workspace entry, code-only wizard, team invite, logout, responsive login; no runtime errors.');
 }finally{await browser.close();}
+

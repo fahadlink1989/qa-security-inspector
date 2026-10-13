@@ -19,6 +19,17 @@ const workspaceId=crypto.randomUUID(),otherId=crypto.randomUUID(),projectId=cryp
 const state=initialState(workspaceId,'Isolated recovery test');state.projects.push({id:projectId,assets:[]});
 await setup.query('INSERT INTO inspector_workspaces(id,name,state) VALUES($1,$2,$3),($4,$5,$6)',[workspaceId,'QA',JSON.stringify(state),otherId,'Isolation',JSON.stringify(initialState(otherId))]);
 let checks=0;const check=(condition,message)=>{assert.ok(condition,message);checks++;};
+const migrationId=crypto.randomUUID(),migrationState=initialState(migrationId,'Migration QA');
+migrationState.scans=[{id:'legacy-web',projectId:'legacy-project',status:'completed',completedAt:'2026-01-01T00:00:00Z',findings:[{fingerprint:'legacy-evidence',evidence:'preserve me'}]}];
+migrationState.projects=[{id:'legacy-project',assets:[],performanceScans:[{id:'legacy-performance',status:'completed',completedAt:'2026-01-01T00:00:00Z',devices:{mobile:{score:72},desktop:{score:91}}}]}];
+await setup.query('INSERT INTO inspector_workspaces(id,name,state) VALUES($1,$2,$3)',[migrationId,'Migration QA',JSON.stringify(migrationState)]);
+await setup.query(await fs.readFile('migrations/002_commercial.sql','utf8'));
+await setup.query(await fs.readFile('migrations/002_commercial.sql','utf8'));
+const migrated=(await setup.query('SELECT kind,data FROM inspector_scan_history WHERE workspace_id=$1 ORDER BY kind',[migrationId])).rows;
+check(migrated.length===2,'Backfill is idempotent');
+check(migrated.find(r=>r.kind==='web').data.findings[0].evidence==='preserve me','Legacy evidence survives migration');
+check(migrated.find(r=>r.kind==='performance').data.devices.desktop.score===91,'Performance evidence survives migration');
+
 const context={workspaceId};
 await inWorkspace(context,async()=>{
   // Concurrent submissions must not exceed the quota, including different connections.

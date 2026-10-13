@@ -42,3 +42,5 @@ jobs:
       - run: npm ci --no-audit --no-fund
       - run: node --import tsx tests/storage-recovery.mjs
       - run: node --import tsx tests/commercial-integration.mjs
+      - run: INSPECTOR_BACKEND=1 npm run build
+      - run: node tests/http-journey.mjs
