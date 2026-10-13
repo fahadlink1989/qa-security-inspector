@@ -6,8 +6,8 @@ function FieldData({data}){
   if(!entries.length)return <p>No real-user dataset was supplied by Google for this scope. This is not a passing result.</p>;
   return <><p>{data.id} · Google experience category: {data.category||'Not supplied'}</p><div className="performanceMetrics">{entries.map(([key,m])=><Metric key={key} label={key.replaceAll('_',' ')} value={m.percentile==null?'Not available':key.includes('CUMULATIVE_LAYOUT_SHIFT')?(m.percentile/100).toFixed(2):m.percentile+' ms'}/>)}</div><p className="muted">Values are Google’s 75th-percentile field measurements. Page and origin coverage are shown separately.</p></>;
 }
-export default function PerformancePanel({asset,runs,jobs,onRun,onClose,onSettings}){
-  const [device,setDevice]=useState('mobile'),[runId,setRunId]=useState(''),[authorized,setAuthorized]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
+export default function PerformancePanel({asset,runs,jobs,onRun,onClose,onSettings,initialRunId}){
+  const [device,setDevice]=useState('mobile'),[runId,setRunId]=useState(initialRunId||''),[authorized,setAuthorized]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
   const history=runs.filter(s=>s.assetId===asset.id).sort((a,b)=>String(b.completedAt).localeCompare(String(a.completedAt)));
   const run=history.find(r=>r.id===runId)||history[0];
   const result=run?.devices?.[device];
@@ -33,3 +33,4 @@ export default function PerformancePanel({asset,runs,jobs,onRun,onClose,onSettin
     <div className="modalFoot">{run?<button className="secondaryBtn" onClick={download}>Download measurement JSON</button>:null}<a className="secondaryBtn" target="_blank" rel="noreferrer" href={'https://pagespeed.web.dev/analysis?'+new URLSearchParams({url:asset.url,form_factor:device})}>Open Google PageSpeed ↗</a><button className="primaryBtn" onClick={onClose}>Done</button></div>
   </section></div>;
 }
+

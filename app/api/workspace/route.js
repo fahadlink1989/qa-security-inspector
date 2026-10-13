@@ -1,3 +1,4 @@
+import {validateWebhookUrl} from '../../../lib/publicAddress.mjs';
 import { database } from '../../../lib/backend/db';
 import { workspaceContext } from '../../../lib/backend/context';
 import { withWorkspace } from '../../../lib/backend/auth';
@@ -38,6 +39,7 @@ async function getWorkspaceView() {
   return {
     version: state.version,
     workspaces:memberships.rows,
+    account:{userId:workspaceContext().userId,role:workspaceContext().role,email:workspaceContext().email},
     workspace: {
       ...state.workspace,
       performanceKey:undefined,
@@ -61,6 +63,7 @@ async function createProject(input) {
 }
 
 async function updateProject(projectId, patch) {
+  if(patch.webhookUrl) validateWebhookUrl(patch.webhookUrl);
   let output = null;
   await mutateState((state) => {
     const project = state.projects.find((item) => item.id === projectId);
@@ -184,8 +187,7 @@ async function updateFindingStatus(scanId, fingerprint, status) {
     if (!scan) throw new Error('Scan not found.');
     const finding = scan.findings.find((item) => item.fingerprint === fingerprint);
     if (!finding) throw new Error('Finding not found.');
-    applyWorkflow(finding,status);
-    changed = finding;
+    changed=updateRiskDetails(state,{projectId:scan.projectId,kind:'web',scanId:scan.id,fingerprint,status},workspaceContext().userId);
     return state;
   });
   return changed;
@@ -204,8 +206,7 @@ async function updateNetworkFindingStatus(projectId, networkScanId, fingerprint,
     if (!scan) throw new Error('Network scan not found.');
     const finding = (scan.findings || []).find((item) => item.fingerprint === fingerprint);
     if (!finding) throw new Error('Finding not found.');
-    applyWorkflow(finding,status);
-    changed = finding;
+    changed=updateRiskDetails(state,{projectId,kind:'network',scanId:scan.id,fingerprint,status},workspaceContext().userId);
     return state;
   });
   return changed;
@@ -224,8 +225,7 @@ async function updateAuthFindingStatus(projectId, authScanId, fingerprint, statu
     if (!authScan) throw new Error('Authenticated Scan not found.');
     const finding = (authScan.findings || []).find((item) => item.fingerprint === fingerprint);
     if (!finding) throw new Error('Finding not found.');
-    applyWorkflow(finding,status);
-    changed = finding;
+    changed=updateRiskDetails(state,{projectId,kind:'auth',scanId:authScan.id,fingerprint,status},workspaceContext().userId);
     return state;
   });
   return changed;
@@ -239,7 +239,7 @@ async function updateCodeFindingStatus(projectId, scanId, fingerprint, status) {
     if(!scan) throw new Error('Code scan not found.');
     const finding=(scan.findings||[]).find(item=>(item.fingerprint||item.id)===fingerprint);
     if(!finding) throw new Error('Finding not found.');
-    changed=applyWorkflow(finding,status);
+    changed=updateRiskDetails(state,{projectId,kind:'code',scanId,fingerprint,status},workspaceContext().userId);
     return state;
   });
   return changed;
@@ -271,6 +271,10 @@ async function handlePOST(request) {
       });
     } else if (body.action === 'risk_details') {
       await mutateState(state=>{result=updateRiskDetails(state,body,workspaceContext().userId);return state;});
+    } else if (body.action === 'create_group') {
+      const name=String(body.name||'').trim();if(!name||name.length>100)throw new Error('Enter a group name of 1–100 characters.');
+      result={id:crypto.randomUUID(),name,assets:[],networks:[],schedule:'manual',createdAt:new Date().toISOString()};
+      await mutateState(state=>{state.projects.push(result);return state;});
     } else if (body.action === 'create_project') {
       if (!body.url) throw new Error('Project URL is required.');
       result = await createProject(body);
@@ -322,3 +326,4 @@ async function handlePOST(request) {
 export const GET=withWorkspace(handleGET);
 
 export const POST=withWorkspace(handlePOST);
+

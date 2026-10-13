@@ -35,3 +35,21 @@ CREATE TABLE IF NOT EXISTS inspector_rate_limits (
 CREATE TABLE IF NOT EXISTS inspector_worker_heartbeats (
  id text PRIMARY KEY, last_seen timestamptz NOT NULL DEFAULT now()
 );
+
+
+CREATE TABLE IF NOT EXISTS inspector_recovery_codes (
+ user_id uuid PRIMARY KEY REFERENCES inspector_users(id), token_hash text UNIQUE NOT NULL,
+ created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE TABLE IF NOT EXISTS inspector_invitations (
+ id uuid PRIMARY KEY, workspace_id uuid NOT NULL REFERENCES inspector_workspaces(id),
+ email text NOT NULL, role text NOT NULL CHECK(role IN ('member','viewer')),
+ token_hash text UNIQUE NOT NULL, created_by uuid NOT NULL REFERENCES inspector_users(id),
+ created_at timestamptz NOT NULL DEFAULT now(), expires_at timestamptz NOT NULL,
+ accepted_at timestamptz, revoked_at timestamptz
+);
+CREATE TABLE IF NOT EXISTS inspector_account_events (
+ id bigserial PRIMARY KEY, workspace_id uuid REFERENCES inspector_workspaces(id),
+ actor_id uuid REFERENCES inspector_users(id), action text NOT NULL, detail jsonb NOT NULL DEFAULT '{}',
+ created_at timestamptz NOT NULL DEFAULT now()
+);

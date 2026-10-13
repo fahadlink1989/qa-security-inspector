@@ -1,4 +1,5 @@
 'use client';
+import TeamSettings from './components/TeamSettings';
 import PerformancePanel from './components/PerformancePanel';
 import { currentRiskRows, coverageState } from '../lib/riskModel.mjs';
 
@@ -58,6 +59,7 @@ export default function Home(){
   const [selectedTarget,setSelectedTarget]=useState(null);
   const [selectedScan,setSelectedScan]=useState(null);
   const [performanceTarget,setPerformanceTarget]=useState('');
+  const [performanceRunId,setPerformanceRunId]=useState('');
   const [pageSpeedKey,setPageSpeedKey]=useState('');
   const [providerBusy,setProviderBusy]=useState(false);
   const [providerMessage,setProviderMessage]=useState('');
@@ -128,13 +130,16 @@ export default function Home(){
 
   const networkWorkerReady=Boolean(engineStatus?.worker?.connected&&engineStatus?.worker?.health?.allowPrivateTargets);
   const project=useMemo(()=>data.projects.find(p=>p.id===selectedProjectId)||null,[data.projects,selectedProjectId]);
-  const scans=useMemo(()=>(data.scans||[]).filter(s=>s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId]);
+  const workspaceWide=['dashboard','risks','scans'].includes(view);
+  const scopedProjects=workspaceWide?data.projects:(project?[project]:[]);
+  const scopedAssets=scopedProjects.flatMap(p=>p.assets||[]);
+  const scans=useMemo(()=>(data.scans||[]).filter(s=>workspaceWide||s.projectId===selectedProjectId).sort((a,b)=>String(b.completedAt||b.startedAt).localeCompare(String(a.completedAt||a.startedAt))),[data.scans,selectedProjectId,workspaceWide]);
   const latestScan=useMemo(()=>scans[0]||null,[scans]);
 
   const activeJobs=useMemo(
-    ()=>(data.jobs||[]).filter(job=>job.projectId===selectedProjectId&&['queued','running'].includes(job.status))
+    ()=>(data.jobs||[]).filter(job=>(workspaceWide||job.projectId===selectedProjectId)&&['queued','running'].includes(job.status))
       .sort((a,b)=>String(b.createdAt||'').localeCompare(String(a.createdAt||''))),
-    [data.jobs,selectedProjectId]
+    [data.jobs,selectedProjectId,workspaceWide]
   );
 
   useEffect(()=>{
@@ -146,13 +151,13 @@ export default function Home(){
   const scanRows=useMemo(()=>{
     const rows=[
       ...scans,
-      ...(project?.performanceScans||[]).map(item=>({...item,_kind:'performance'})),
-      ...(project?.networkScans||[]).map(item=>({...item,_kind:'network'})),
-      ...(project?.authScans||[]).map(item=>({...item,_kind:'auth'})),
-      ...(project?.codeScans||[]).map(item=>({...item,_kind:'code'}))
+      ...scopedProjects.flatMap(p=>p.performanceScans||[]).map(item=>({...item,_kind:'performance'})),
+      ...scopedProjects.flatMap(p=>p.networkScans||[]).map(item=>({...item,_kind:'network'})),
+      ...scopedProjects.flatMap(p=>p.authScans||[]).map(item=>({...item,_kind:'auth'})),
+      ...scopedProjects.flatMap(p=>p.codeScans||[]).map(item=>({...item,_kind:'code'}))
     ];
     return rows.sort((a,b)=>String(b.completedAt||b.scannedAt||b.startedAt||'').localeCompare(String(a.completedAt||a.scannedAt||a.startedAt||'')));
-  },[scans,project]);
+  },[scans,project,data.projects,workspaceWide]);
 
   const latestByAsset=useMemo(()=>{
     const map=new Map();
@@ -162,7 +167,12 @@ export default function Home(){
     return map;
   },[scans]);
 
-  const currentRisks=useMemo(()=>currentRiskRows(scans,project),[scans,project]);
+  const currentRisks=useMemo(()=>scopedProjects.flatMap(p=>currentRiskRows(scans.filter(s=>s.projectId===p.id),p)),[scans,project,data.projects,workspaceWide]);
+  const latestCoverage=new Map();
+  for(const s of scanRows){const k=JSON.stringify([s.projectId,s.assetId||s.networkTargetId||s.repositoryUrl||s.repository,s._kind||s.mode||'standard']);if(!latestCoverage.has(k))latestCoverage.set(k,s);}
+  const hasCoverageGaps=[...latestCoverage.values()].some(s=>!coverageState(s).complete);
+  const hasTarget=scopedAssets.length>0||scanRows.some(s=>s._kind==='code');
+  const hasScan=scanRows.some(s=>['completed','completed_with_gaps','partial'].includes(s.status));
 
   const filteredRisks=useMemo(()=>currentRisks.filter(r=>{
     if(riskSearch&&!JSON.stringify([r.title,r.engine,r.owner,r.location,r._scan?.url]).toLowerCase().includes(riskSearch.toLowerCase()))return false;
@@ -198,7 +208,7 @@ export default function Home(){
     event?.preventDefault();setProviderBusy(true);setProviderMessage('');
     try{const response=await fetch('/api/performance',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({action:'configure',key:remove?'':pageSpeedKey})});const result=await response.json();if(!response.ok)throw new Error(result.error);setPageSpeedKey('');await load(project?.id,true);setProviderMessage(remove?'Workspace key removed.':'API key saved securely. Run a measurement to verify Google access.');}catch(error){setProviderMessage(error.message);}finally{setProviderBusy(false);}
   }
-  function openScanDetails(scan){if(scan._kind==='performance'){setPerformanceTarget(scan.assetId);}else setSelectedScan(scan);}
+  function openScanDetails(scan){if(scan._kind==='performance'){setSelectedProjectId(scan.projectId);setPerformanceRunId(scan.id);setPerformanceTarget(scan.assetId);}else setSelectedScan(scan);}
 
   async function workspaceAction(body){
     const response=await fetch('/api/workspace',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});
@@ -321,36 +331,37 @@ export default function Home(){
   }
 
   async function runNewScan(){
-    if(!project) return;
-    const asset=project.assets.find(a=>a.id===newScan.assetId)||project.assets[0];
-    if(!asset && !['code','network'].includes(newScan.type)) return;
+    let scanProject=project;
+    const asset=scanProject?.assets?.find(a=>a.id===newScan.assetId);
+    if(!asset && !['code','network'].includes(newScan.type)){setScanError('Add and select a website target first.');return;}
     if(!newScan.authorized) return;
     setScanRunning(true);
     setScanError('');setNotice('Submitting authorized scan…');
     try{
+      if(!scanProject){if(newScan.type!=='code')throw new Error('Add a target first.');if(!newScan.repositoryUrl)throw new Error('Enter a GitHub repository URL.');scanProject=await workspaceAction({action:'create_group',name:'Repositories'});setSelectedProjectId(scanProject.id);}
       if(newScan.timing!=='now'&&['standard','deep'].includes(newScan.type)){
-        await workspaceAction({action:'schedule_asset',projectId:project.id,assetId:asset.id,frequency:newScan.timing,mode:newScan.type,authorized:true});
-        setNewScanOpen(false);setNewScan(prev=>({...prev,authorized:false}));await load(project.id,true);setView('scans');setScanTab('scheduled');setNotice('Recurring scan saved. The first scan queues within a minute, then once per UTC schedule period.');return;
+        await workspaceAction({action:'schedule_asset',projectId:scanProject.id,assetId:asset.id,frequency:newScan.timing,mode:newScan.type,authorized:true});
+        setNewScanOpen(false);setNewScan(prev=>({...prev,authorized:false}));await load(scanProject.id,true);setView('scans');setScanTab('scheduled');setNotice('Recurring scan saved. The first scan queues within a minute, then once per UTC schedule period.');return;
       }
       let response;
       if(newScan.type==='authenticated'){
         if(!newScan.credential) throw new Error('Enter an authorized test session first.');
         response=await fetch('/api/auth-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,assetId:asset.id,authorized:true,authType:newScan.authMethod,credential:newScan.credential
+          projectId:scanProject.id,assetId:asset.id,authorized:true,authType:newScan.authMethod,credential:newScan.credential
         })});
       }else if(newScan.type==='code'){
         if(!newScan.repositoryUrl) throw new Error('Enter a GitHub repository URL.');
         response=await fetch('/api/code-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,repositoryUrl:newScan.repositoryUrl,token:newScan.repositoryToken,authorized:true
+          projectId:scanProject.id,repositoryUrl:newScan.repositoryUrl,token:newScan.repositoryToken,authorized:true
         })});
       }else if(newScan.type==='network'){
         if(!newScan.networkTargetId) throw new Error('Add an internal network first.');
         response=await fetch('/api/network-scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,networkTargetId:newScan.networkTargetId,authorized:true
+          projectId:scanProject.id,networkTargetId:newScan.networkTargetId,authorized:true
         })});
       }else{
         response=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({
-          projectId:project.id,assetId:asset.id,authorized:true,mode:newScan.type==='deep'?'deep':'standard'
+          projectId:scanProject.id,assetId:asset.id,authorized:true,mode:newScan.type==='deep'?'deep':'standard'
         })});
       }
       const result=await response.json();
@@ -358,7 +369,7 @@ export default function Home(){
       setNewScan(prev=>({...prev,credential:'',repositoryToken:'',authorized:false}));
       setNewScanOpen(false);
 
-      await load(project.id,true);
+      await load(scanProject.id,true);
       setView('scans');
       setScanTab('history');
       setNotice((result.scanType||'Scan')+' queued. Progress and completion status will update here.');
@@ -369,7 +380,7 @@ export default function Home(){
   async function saveRisk(risk,status,details={}){
     setRiskSaving(true);setRiskError('');
     try{
-      const updated=await workspaceAction({action:'risk_details',projectId:project.id,
+      const updated=await workspaceAction({action:'risk_details',projectId:risk._scan.projectId,
         kind:risk._code?'code':risk._auth?'auth':risk._network?'network':'web',
         scanId:risk._scan.id,fingerprint:risk.fingerprint||risk.id,status,...details});
       await load(project.id,true);
@@ -393,7 +404,6 @@ export default function Home(){
   }
 
   function openNewScan(assetId){
-    if(!project?.assets?.some(a=>a.status==='active')){setScanAfterTarget(true);setTargetError('');setAddTargetOpen(true);return;}
     setNewScan(prev=>({...prev,timing:'now',assetId:assetId||prev.assetId||project?.assets?.[0]?.id||'',networkTargetId:prev.networkTargetId||project?.networks?.[0]?.id||'',authorized:false}));
     setScanError('');setNewScanOpen(true);
   }
@@ -426,7 +436,7 @@ export default function Home(){
             {(data.workspaces||[data.workspace]).filter(w=>w?.id).map(w=><option key={w.id} value={w.id}>{w.name}</option>)}
           </select>
           <button className="secondaryBtn" onClick={()=>{setWorkspaceError('');setWorkspaceModal(true);}}>＋ Create workspace</button>
-          {data.projects.length>1?<><label htmlFor="target-group">Target group</label><select id="target-group" value={selectedProjectId} onChange={e=>selectProject(e.target.value)}>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></>:null}
+          {data.projects.length>1&&!workspaceWide?<><label htmlFor="target-group">Target group</label><select id="target-group" value={selectedProjectId} onChange={e=>selectProject(e.target.value)}>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></>:null}
         </div>
 
         <nav className="primaryNav">
@@ -447,10 +457,10 @@ export default function Home(){
         </nav>
 
         <div className="gettingStarted">
-          <div className="getHead"><strong>Getting started</strong><span>{latestScan?'2 of 2':project?'1 of 2':'0 of 2'}</span></div>
-          <div className="progressTrack"><i style={{width:latestScan?'100%':project?'50%':'0%'}}/></div>
-          <button className={project?'done':''} onClick={openAddTarget}><span>{project?'✓':'1'}</span> Add a target</button>
-          <button className={latestScan?'done':''} onClick={()=>openNewScan()}><span>{latestScan?'✓':'2'}</span> Run your first scan</button>
+          <div className="getHead"><strong>Getting started</strong><span>{hasScan?'2 of 2':hasTarget?'1 of 2':'0 of 2'}</span></div>
+          <div className="progressTrack"><i style={{width:hasScan?'100%':hasTarget?'50%':'0%'}}/></div>
+          <button className={hasTarget?'done':''} onClick={openAddTarget}><span>{hasTarget?'✓':'1'}</span> Add a target</button>
+          <button className={hasScan?'done':''} onClick={()=>openNewScan()}><span>{hasScan?'✓':'2'}</span> Run your first scan</button>
         </div>
 
         <div className="railBottom">
@@ -476,11 +486,11 @@ export default function Home(){
             </header>
 
             {!project?(
-              <div className="emptyState"><h2>{data.workspace?.name} is ready</h2><p>Add a website or application you are authorized to test. Then choose a scan and review its results here.</p><button className="primaryBtn" onClick={()=>{setScanAfterTarget(false);setTargetError('');setAddTargetOpen(true);}}>Add your first target</button><p className="muted">1. Add target → 2. Run an authorized scan → 3. Review risks and reports</p></div>
+              <div className="emptyState"><h2>{data.workspace?.name} is ready</h2><p>Add a website or application you are authorized to test. Then choose a scan and review its results here.</p><button className="primaryBtn" onClick={()=>{setScanAfterTarget(false);setTargetError('');setAddTargetOpen(true);}}>Add your first target</button><button className="secondaryBtn" onClick={()=>{setNewScan(prev=>({...prev,type:'code'}));openNewScan();}}>Scan a repository</button><p className="muted">1. Add target → 2. Run an authorized scan → 3. Review risks and reports</p></div>
             ):(
               <>
-                <div className="journeyStrip"><div><span className="eyebrow">YOUR NEXT STEP</span><h2>{activeJobs.length?'Your scan is running':!scanRows.length?'Establish your security baseline':scanRows.some(s=>!coverageState(s).complete)?'Review gaps in scan coverage':summary.critical+summary.high?'Prioritize your highest risks':'Review findings and track remediation'}</h2><p>{activeJobs.length?'Open scan activity to follow progress. Results appear after evidence is saved.':!scanRows.length?'Run a non-destructive Web App Scan on your first target.':'A scan is a point-in-time assessment. Review both findings and the checks that could not run.'}</p></div><button className="primaryBtn" onClick={()=>activeJobs.length?setView('scans'):!scanRows.length?openNewScan():setView(scanRows.some(s=>!coverageState(s).complete)?'scans':'risks')}>{activeJobs.length?'View activity':!scanRows.length?'Choose a scan':'Review results'}</button></div>
-                <div className="coverageStats"><span><b>{project.assets?.length||0}</b> targets</span><span><b>{[...(project.assets||[])].filter(a=>latestByAsset.has(a.id)).length}</b> scanned</span><span><b>{(project.assets||[]).filter(a=>!latestByAsset.has(a.id)).length}</b> unscanned</span><span><b>{[...latestByAsset.values()].filter(s=>!coverageState(s).complete).length}</b> with coverage gaps</span></div>
+                <div className="journeyStrip"><div><span className="eyebrow">YOUR NEXT STEP</span><h2>{activeJobs.length?'Your scan is running':!scanRows.length?'Establish your security baseline':hasCoverageGaps?'Review gaps in scan coverage':summary.critical+summary.high?'Prioritize your highest risks':'Review findings and track remediation'}</h2><p>{activeJobs.length?'Open scan activity to follow progress. Results appear after evidence is saved.':!scanRows.length?'Run a non-destructive Web App Scan on your first target.':'A scan is a point-in-time assessment. Review both findings and the checks that could not run.'}</p></div><button className="primaryBtn" onClick={()=>activeJobs.length?setView('scans'):!scanRows.length?openNewScan():setView(hasCoverageGaps?'scans':'risks')}>{activeJobs.length?'View activity':!scanRows.length?'Choose a scan':'Review results'}</button></div>
+                <div className="coverageStats"><span><b>{scopedAssets.length}</b> targets</span><span><b>{scopedAssets.filter(a=>latestByAsset.has(a.id)).length}</b> web assessed</span><span><b>{scopedAssets.filter(a=>!latestByAsset.has(a.id)).length}</b> unscanned</span><span><b>{[...latestByAsset.values()].filter(s=>!coverageState(s).complete).length}</b> with coverage gaps</span></div>
                 <div className="sectionTitle"><h2>{scanRows.length?'Open risks':'Awaiting your first scan'}</h2><span>Total: {summary.total}</span></div>
                 <div className="riskCards">
                   <button className="riskCard critical" onClick={()=>{setRiskSeverity('Critical');setRiskStatus('Open');setView('risks')}}><span>Critical</span><strong>{summary.critical}</strong></button>
@@ -503,7 +513,7 @@ export default function Home(){
                           <div className="scanRight"><Badge tone={statusTone(scan.status)}>{scan.status==='completed_with_gaps'?'Completed with gaps':scan.status}</Badge><span className="score">{scan._kind==='performance'?'Speed':scan.score??'—'}</span></div>
                         </button>
                       ))}
-                      {!scanRows.length?<div className="emptyRow">No scans yet. Start with a Web App Scan.</div>:null}
+                      {!scanRows.length?<div className="emptyRow">No scans yet. Choose a website or repository scan.</div>:null}
                     </div>
                   </section>
 
@@ -525,7 +535,7 @@ export default function Home(){
                   <div className="blockHead"><h2>Recent risks</h2><button onClick={()=>setView('risks')}>See all risks ›</button></div>
                   <div className="riskPreview">
                     {currentRisks.slice(0,6).map(r=>(
-                      <button key={r.id||r.fingerprint} onClick={()=>setSelectedRisk(r)}>
+                      <button key={r._riskKey} onClick={()=>setSelectedRisk(r)}>
                         <span className={'threatBars '+String(r.severity).toLowerCase()}><i/><i/><i/><i/></span>
                         <div><strong>{r.title}</strong><span>{r._scan?.finalUrl||r.location||project.assets?.[0]?.url}</span></div>
                         <Sev value={r.severity}/><span className="riskStatus">{(r.workflowStatus||'open').replaceAll('_',' ')}</span>
@@ -553,7 +563,7 @@ export default function Home(){
                   return <div className="tableRow targetGrid" key={asset.id}>
                     <button className="targetName detailLink" onClick={()=>setSelectedTarget(asset)}><span className="expand">›</span><div><strong>{asset.label}</strong><small>{asset.url}</small></div></button>
                     <span>Web</span><span>{last?fmt(last.completedAt):'Never'}</span><span>{shortDate(asset.createdAt)}</span>
-                    <div className="targetActions"><button className="secondaryBtn smallBtn" onClick={()=>setPerformanceTarget(asset.id)}>Speed</button><button className="secondaryBtn smallBtn" onClick={()=>editTarget(asset)}>Edit</button><button className="rowMenu" onClick={()=>removeTarget(asset)}>Remove</button><button className="primaryBtn smallBtn" onClick={()=>openNewScan(asset.id)}>Scan</button></div>
+                    <div className="targetActions"><button className="secondaryBtn smallBtn" onClick={()=>{setPerformanceRunId('');setPerformanceTarget(asset.id);}}>Speed</button><button className="secondaryBtn smallBtn" onClick={()=>editTarget(asset)}>Edit</button><button className="rowMenu" onClick={()=>removeTarget(asset)}>Remove</button><button className="primaryBtn smallBtn" onClick={()=>openNewScan(asset.id)}>Scan</button></div>
                   </div>;
                 })}
                 {!project.assets?.length?<div className="emptyRow">No targets have been added.</div>:null}
@@ -579,7 +589,7 @@ export default function Home(){
                   <span>{fmt(job.createdAt)}</span>
                   <span className="pendingText">Scanning…</span>
                 </div>)}
-                {(data.jobs||[]).filter(job=>job.projectId===selectedProjectId&&job.status==='failed'&&!scanRows.some(scan=>scan.id===job.scanId)).map(job=><div className="tableRow scanGrid" key={job.id}>
+                {(data.jobs||[]).filter(job=>job.status==='failed'&&!scanRows.some(scan=>scan.id===job.scanId)).map(job=><div className="tableRow scanGrid" key={job.id}>
                   <div><strong>{job.scanType}</strong><small>{job.error||'Scan failed'}</small></div><span>{job.target}</span>
                   <Badge tone="danger">Failed after {job.attempts||1} attempt(s)</Badge><span>{fmt(job.completedAt)}</span>
                   <button className="secondaryBtn" onClick={()=>openNewScan(job.assetId)}>New scan</button>
@@ -594,7 +604,7 @@ export default function Home(){
                 {!scanRows.length?<div className="emptyRow">No completed scan results yet.</div>:null}
               </div>
             ):(
-              <div className="dataCard"><div className="blockHead"><h2>Recurring target scans</h2><button onClick={()=>openNewScan()}>Create schedule</button></div>{(project?.assets||[]).map(asset=>{const frequency=asset.schedule??project.schedule;return <div className="historyItem" key={asset.id}><strong>{asset.label}</strong><span>{asset.url}</span><span>{['daily','weekly'].includes(frequency)?frequency+' · '+((asset.scheduledMode||project.scheduledMode)==='deep'?'Attack Surface Scan':'Web App Scan')+' · UTC periods':'Not scheduled'}</span>{['daily','weekly'].includes(frequency)?<button className="secondaryBtn" onClick={async()=>{try{await workspaceAction({action:'schedule_asset',projectId:project.id,assetId:asset.id,frequency:'manual'});await load(project.id,true);setNotice('Schedule stopped for '+asset.label);}catch(error){setNotice(error.message);}}}>Stop schedule</button>:null}</div>})}{!project?.assets?.length?<div className="emptyRow">Add a target before scheduling scans.</div>:null}</div>
+              <div className="dataCard"><div className="blockHead"><h2>Recurring target scans</h2><button onClick={()=>openNewScan()}>Create schedule</button></div>{scopedProjects.flatMap(p=>(p.assets||[]).map(asset=>({...asset,_project:p}))).map(asset=>{const frequency=asset.schedule??asset._project.schedule;return <div className="historyItem" key={asset.id}><strong>{asset.label}</strong><span>{asset.url}</span><span>{['daily','weekly'].includes(frequency)?frequency+' · '+((asset.scheduledMode||asset._project?.scheduledMode||project?.scheduledMode)==='deep'?'Attack Surface Scan':'Web App Scan')+' · UTC periods':'Not scheduled'}</span>{['daily','weekly'].includes(frequency)?<button className="secondaryBtn" onClick={async()=>{try{await workspaceAction({action:'schedule_asset',projectId:asset._project.id,assetId:asset.id,frequency:'manual'});await load(project.id,true);setNotice('Schedule stopped for '+asset.label);}catch(error){setNotice(error.message);}}}>Stop schedule</button>:null}</div>})}{!scopedAssets.length?<div className="emptyRow">Add a target before scheduling scans.</div>:null}</div>
             )}
           </section>
         ):null}
@@ -713,6 +723,7 @@ export default function Home(){
         {view==='settings'?(
           <section className="page">
             <header className="pageHeader"><div><h1>Settings</h1><p>Storage: {engineStatus?.orchestration?.storage||'checking'} · Scan consumer: {engineStatus?.orchestration?.consumerHealthy?'connected':'checking / unavailable'}</p><p>Monitoring, notifications and scanner platform configuration.</p><button className="secondaryBtn" onClick={()=>setView('networks')}>Internal network configuration</button></div></header>
+            <TeamSettings key={data.workspace?.id} workspaceId={data.workspace?.id} account={data.account}/>
             <form className="settingsCard performanceSettings" onSubmit={configurePageSpeed}><h2>Google PageSpeed Insights</h2><p>Measure mobile and desktop loading performance using Google’s real Lighthouse results.</p><p className="muted">{data.workspace?.performanceKeyConfigured?'API key configured.':'No API key configured. Unauthenticated requests may be quota-limited.'}</p><label>Google API key<input type="password" autoComplete="off" value={pageSpeedKey} onChange={e=>setPageSpeedKey(e.target.value)} placeholder="Paste a PageSpeed-enabled Google API key"/></label><p className="muted">Encrypted at rest and used only by the backend. Enable the PageSpeed Insights API in your Google Cloud project and restrict this key to that API.</p><a target="_blank" rel="noreferrer" href="https://developers.google.com/speed/docs/insights/v5/get-started">Google setup instructions ↗</a><div className="headerActions"><button className="primaryBtn" disabled={providerBusy||!pageSpeedKey}>Save API key</button><button type="button" className="secondaryBtn" disabled={providerBusy||!data.workspace?.performanceKeyConfigured} onClick={()=>configurePageSpeed(null,true)}>Remove workspace key</button></div>{providerMessage?<p role="status">{providerMessage}</p>:null}</form>
             {!project?<div className="emptyState"><h2>No targets in {data.workspace?.name} yet</h2><p>Your workspace is created. Add your first target to begin.</p><button className="primaryBtn" onClick={openAddTarget}>Add your first target</button></div>:(
               <div className="settingsGrid">
@@ -740,7 +751,7 @@ export default function Home(){
         ):null}
       </section>
 
-      {performanceTarget&&project?.assets?.some(a=>a.id===performanceTarget)?<PerformancePanel key={performanceTarget} asset={project.assets.find(a=>a.id===performanceTarget)} runs={project.performanceScans||[]} jobs={data.jobs||[]} onRun={runPerformance} onClose={()=>setPerformanceTarget('')} onSettings={()=>{setPerformanceTarget('');setView('settings');}}/>:null}
+      {performanceTarget&&project?.assets?.some(a=>a.id===performanceTarget)?<PerformancePanel key={performanceTarget+performanceRunId} initialRunId={performanceRunId} asset={project.assets.find(a=>a.id===performanceTarget)} runs={project.performanceScans||[]} jobs={data.jobs||[]} onRun={runPerformance} onClose={()=>setPerformanceTarget('')} onSettings={()=>{setPerformanceTarget('');setView('settings');}}/>:null}
       {workspaceModal?<div className="modalBackdrop"><section className="modal smallModal" role="dialog" aria-modal="true" aria-labelledby="create-workspace-title">
         <div className="modalHead"><div><h2 id="create-workspace-title">Create workspace</h2><p>Keep a separate organization or client’s targets, scans, and risks together.</p></div><button aria-label="Close workspace dialog" disabled={workspaceBusy} onClick={()=>setWorkspaceModal(false)}>×</button></div>
         <form onSubmit={createWorkspace}><label className="field">Workspace name<input autoFocus required maxLength={100} value={workspaceName} onChange={e=>setWorkspaceName(e.target.value)} placeholder="Company or client name"/></label>{workspaceError?<p role="alert">{workspaceError}</p>:null}<div className="modalFoot"><button type="button" className="secondaryBtn" disabled={workspaceBusy} onClick={()=>setWorkspaceModal(false)}>Cancel</button><button className="primaryBtn" disabled={workspaceBusy}>{workspaceBusy?'Creating…':'Create workspace'}</button></div></form>
@@ -760,7 +771,8 @@ export default function Home(){
               ].map(([key,title,kicker,desc])=><button key={key} disabled={key==='network'&&!networkWorkerReady} className={newScan.type===key?'selected':''} onClick={()=>setNewScan({...newScan,type:key})}><span>{key==='network'&&!networkWorkerReady?'Unavailable · private worker required':kicker}</span><strong>{title}</strong><small>{desc}</small></button>)}
             </div>
 
-            {!['code','network'].includes(newScan.type)?<label className="field">Target<select aria-label="Target" value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {!['code','network'].includes(newScan.type)?<label className="field">Target{!project?.assets?.length&&<button className="secondaryBtn" onClick={()=>{setNewScanOpen(false);setScanAfterTarget(true);setAddTargetOpen(true);}}>Add website target</button>}<select aria-label="Target" value={newScan.assetId} onChange={e=>setNewScan({...newScan,assetId:e.target.value})}>{(project?.assets||[]).map(a=><option key={a.id} value={a.id}>{a.label} · {a.url}</option>)}</select></label>:null}
+            {data.projects.length>1?<label className="field">Target group<select value={selectedProjectId} onChange={e=>selectProject(e.target.value)}>{data.projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>:null}
             {newScan.type==='network'?<label className="field">Internal network<select value={newScan.networkTargetId} onChange={e=>setNewScan({...newScan,networkTargetId:e.target.value})}><option value="">Select network</option>{(project?.networks||[]).map(n=><option key={n.id} value={n.id}>{n.label} · {n.cidr}</option>)}</select><small>Internal scans require the scanner worker to run where it can reach this private CIDR.</small></label>:null}
 
             {newScan.type==='authenticated'?<>
@@ -797,14 +809,14 @@ export default function Home(){
           <aside className="riskDrawer" role="dialog" aria-modal="true" aria-label="Risk details">
             <div className="drawerTop"><div><Sev value={selectedRisk.severity}/><Badge tone="blue">{selectedRisk.engine||selectedRisk.category}</Badge></div><button onClick={()=>setSelectedRisk(null)}>×</button></div>
             <h2>{selectedRisk.title}</h2>
-            {selectedRisk.coverageUnverified?<p className="muted">Retained from an earlier scan: the latest scan had incomplete coverage and could not verify this risk.</p>:null}
+            {selectedRisk.coverageUnverified?<p className="muted">Last observed in an earlier scan. Absence in a later scan does not verify a fix; retest or record a reviewed decision to close it.</p>:null}
             <p className="lead">{selectedRisk.summary}</p>
             <section><h3>Detection details</h3><p>First seen: {fmt(selectedRisk.firstSeen||selectedRisk._scan?.completedAt||selectedRisk._scan?.scannedAt)} · Last seen: {fmt(selectedRisk.lastSeen||selectedRisk._scan?.completedAt||selectedRisk._scan?.scannedAt)}</p>{selectedRisk.cve?<p>CVE: {String(selectedRisk.cve)}</p>:null}{selectedRisk.cwe?<p>CWE: {String(selectedRisk.cwe)}</p>:null}{selectedRisk.cvss!=null?<p>CVSS: {typeof selectedRisk.cvss==='object'?JSON.stringify(selectedRisk.cvss):String(selectedRisk.cvss)}</p>:null}</section>
             <section><h3>Why it matters</h3><p>{selectedRisk.impact||'Review the evidence and affected location to understand the potential security impact.'}</p></section>
             <section><h3>Evidence</h3><pre>{typeof selectedRisk.evidence==='object'?JSON.stringify(selectedRisk.evidence,null,2):selectedRisk.evidence||selectedRisk.location||'No additional evidence was supplied by this check.'}</pre></section>
             <section><h3>Recommended fix</h3><p>{selectedRisk.remediation||'Review the upstream advisory or application control and remove the underlying exposure.'}</p></section>
             {selectedRisk._scan?.remediationPlan?.findingGuidance?.[selectedRisk.fingerprint]?<section><h3>Implementation guidance</h3><ol>{(selectedRisk._scan.remediationPlan.findingGuidance[selectedRisk.fingerprint].steps||[]).map((s,i)=><li key={i}>{s}</li>)}</ol></section>:null}
-            <section><h3>Engineering owner and notes</h3><form onSubmit={e=>{e.preventDefault();saveRisk(selectedRisk,undefined,riskDraft);}}><label className="field">Owner or team<input maxLength={120} value={riskDraft.owner} onChange={e=>setRiskDraft({...riskDraft,owner:e.target.value})} placeholder="e.g. Platform Engineering"/></label><label className="field">Remediation notes<textarea rows={4} maxLength={4000} value={riskDraft.notes} onChange={e=>setRiskDraft({...riskDraft,notes:e.target.value})} placeholder="Fix plan, ticket reference, or acceptance rationale"/></label><p className="muted">Ownership is a saved label. No notification is sent.</p><button className="primaryBtn" disabled={riskSaving}>Save remediation details</button></form>{riskError?<p role="alert">{riskError}</p>:null}</section>
+            <section><h3>Engineering owner and notes</h3><form onSubmit={e=>{e.preventDefault();saveRisk(selectedRisk,undefined,riskDraft);}}><label className="field">Owner or team<input maxLength={120} value={riskDraft.owner} onChange={e=>setRiskDraft({...riskDraft,owner:e.target.value})} placeholder="e.g. Platform Engineering"/></label><label className="field">Remediation notes<textarea rows={4} maxLength={4000} value={riskDraft.notes} onChange={e=>setRiskDraft({...riskDraft,notes:e.target.value})} placeholder="Fix plan, ticket reference, or acceptance rationale"/></label><p className="muted">Assign an email or team name. Team members can review the saved assignment in Risks; no assignment email is sent.</p><button className="primaryBtn" disabled={riskSaving}>Save remediation details</button></form>{riskError?<p role="alert">{riskError}</p>:null}</section>
             <section><h3>Verify the fix</h3><p>{selectedRisk._scanId?'Retest repeats the original authorized scan profile. A risk is verified resolved only when the finding is absent and required coverage completed.':'Run the same scan profile again. Authenticated and private repository scans require a fresh authorized credential.'}</p><p className="muted">Marking a risk Resolved is a manual decision, not proof of a verified fix.</p>{(selectedRisk.retests||[]).map((r,i)=><p key={i}>{fmt(r.at)} · {r.status.replaceAll('_',' ')}</p>)}</section>
             <section><h3>Workflow</h3><div className="workflowButtons">
               {<><button onClick={()=>updateRiskStatus(selectedRisk,'open')}>Open</button><button onClick={()=>updateRiskStatus(selectedRisk,'in_progress')}>In progress</button><button onClick={()=>updateRiskStatus(selectedRisk,'resolved')}>Resolved</button><button onClick={()=>updateRiskStatus(selectedRisk,'accepted')}>Accept risk</button><button onClick={()=>updateRiskStatus(selectedRisk,'false_positive')}>False positive</button></>}
@@ -815,7 +827,7 @@ export default function Home(){
       ):null}
 
       {selectedTarget?<div className="modalBackdrop riskBackdrop"><aside className="riskDrawer" role="dialog" aria-modal="true" aria-label="Target details"><div className="drawerTop"><Badge tone="blue">Web target</Badge><button aria-label="Close target details" onClick={()=>setSelectedTarget(null)}>×</button></div><h2>{selectedTarget.label}</h2><p className="lead">{selectedTarget.url}</p><p>Added {fmt(selectedTarget.createdAt)}</p><button className="primaryBtn" onClick={()=>{openNewScan(selectedTarget.id);setSelectedTarget(null);}}>Scan this target</button><button className="secondaryBtn" onClick={()=>{setPerformanceTarget(selectedTarget.id);setSelectedTarget(null);}}>Mobile & desktop speed</button><section><h3>Scan history</h3>{scanRows.filter(s=>s.assetId===selectedTarget.id).map(s=><button className="historyItem" key={s.id} onClick={()=>{setSelectedTarget(null);openScanDetails(s);}}><strong>{scanLabel(s)}</strong><span>{fmt(s.completedAt||s.scannedAt)} · {coverageState(s).label}</span><span>{s.findings?.length||0} findings →</span></button>)}{!scanRows.some(s=>s.assetId===selectedTarget.id)?<p>No scan has assessed this target yet.</p>:null}</section><section><h3>Discovered relationships</h3><p className="muted">Observed during Attack Surface scans of this target. Discovery does not add a target or schedule scanning automatically.</p>{(scans.find(s=>s.assetId===selectedTarget.id&&s.mode==='deep')?.evidence?.deep?.liveHosts||[]).map((h,i)=><div className="historyItem" key={i}><strong>{h.hostname}</strong><span>{h.url} · HTTP {h.status}</span></div>)}{!scans.some(s=>s.assetId===selectedTarget.id&&s.evidence?.deep?.liveHosts?.length)?<p>No discovered hosts recorded yet.</p>:null}</section><section><h3>Current risks</h3>{currentRisks.filter(r=>r._scan?.assetId===selectedTarget.id).map(r=><button className="historyItem" key={r._riskKey} onClick={()=>{setSelectedTarget(null);setSelectedRisk(r);}}><Sev value={r.severity}/><strong>{r.title}</strong><span>{r.workflowStatus||'open'}</span></button>)}</section></aside></div>:null}
-      {selectedScan?<div className="modalBackdrop riskBackdrop"><aside className="riskDrawer" role="dialog" aria-modal="true" aria-label="Scan details"><div className="drawerTop"><Badge tone={coverageState(selectedScan).complete?'success':'warning'}>{coverageState(selectedScan).label} coverage</Badge><button aria-label="Close scan details" onClick={()=>setSelectedScan(null)}>×</button></div><h2>{scanLabel(selectedScan)}</h2><p className="lead">{selectedScan.finalUrl||selectedScan.url||selectedScan.target||selectedScan.repository?.url}</p><p>Started: {fmt(selectedScan.startedAt||selectedScan.scannedAt)}</p><p>Completed: {fmt(selectedScan.completedAt||selectedScan.scannedAt)}</p><section><h3>What ran</h3>{(selectedScan.engineRuns||[]).map((r,i)=><div className="historyItem" key={i}><strong>{r.name||r.engine}</strong><span>{r.status}</span>{r.error?<p>{r.error}</p>:null}</div>)}{!selectedScan.engineRuns?.length?<p>Engine-level telemetry was not recorded for this scan.</p>:null}</section><section><h3>Coverage and limitations</h3>{coverageState(selectedScan).gaps.length?coverageState(selectedScan).gaps.map((g,i)=><p className="formError" key={i}>{g}</p>):<p>{coverageState(selectedScan).complete?'Requested checks completed. Results apply only to this scope at the time of scanning.':'This scan did not complete. No clean assessment can be made.'}</p>}</section><section><h3>Findings ({selectedScan.findings?.length||0})</h3>{(selectedScan.findings||[]).map((f,i)=><div className="historyItem" key={i}><Sev value={f.severity}/><strong>{f.title}</strong><p>{f.summary}</p></div>)}</section><div className="workflowButtons"><button className="primaryBtn" onClick={()=>{setSelectedScan(null);setView('risks');}}>Manage risks</button><a className="secondaryBtn" href={'/api/report?'+new URLSearchParams({projectId:project.id,scanId:selectedScan.id,format:'pdf',section:'technical'})}>Download scan report</a></div></aside></div>:null}
+      {selectedScan?<div className="modalBackdrop riskBackdrop"><aside className="riskDrawer" role="dialog" aria-modal="true" aria-label="Scan details"><div className="drawerTop"><Badge tone={coverageState(selectedScan).complete?'success':'warning'}>{coverageState(selectedScan).label} coverage</Badge><button aria-label="Close scan details" onClick={()=>setSelectedScan(null)}>×</button></div><h2>{scanLabel(selectedScan)}</h2><p className="lead">{selectedScan.finalUrl||selectedScan.url||selectedScan.target||selectedScan.repository?.url}</p><p>Started: {fmt(selectedScan.startedAt||selectedScan.scannedAt)}</p><p>Completed: {fmt(selectedScan.completedAt||selectedScan.scannedAt)}</p><section><h3>What ran</h3>{(selectedScan.engineRuns||[]).map((r,i)=><div className="historyItem" key={i}><strong>{r.name||r.engine}</strong><span>{r.status}</span>{r.error?<p>{r.error}</p>:null}</div>)}{!selectedScan.engineRuns?.length?<p>Engine-level telemetry was not recorded for this scan.</p>:null}</section><section><h3>Coverage and limitations</h3>{coverageState(selectedScan).gaps.length?coverageState(selectedScan).gaps.map((g,i)=><p className="formError" key={i}>{g}</p>):<p>{coverageState(selectedScan).complete?'Requested checks completed. Results apply only to this scope at the time of scanning.':'This scan did not complete. No clean assessment can be made.'}</p>}</section>{selectedScan.notification&&<section><h3>Alert delivery</h3><p>{selectedScan.notification.status.replaceAll('_',' ')}</p>{selectedScan.notification.error&&<p className="formError">{selectedScan.notification.error}</p>}</section>}<section><h3>Findings ({selectedScan.findings?.length||0})</h3>{(selectedScan.findings||[]).map((f,i)=><div className="historyItem" key={i}><Sev value={f.severity}/><strong>{f.title}</strong><p>{f.summary}</p></div>)}</section><div className="workflowButtons"><button className="primaryBtn" onClick={()=>{setSelectedScan(null);setView('risks');}}>Manage risks</button><a className="secondaryBtn" href={'/api/report?'+new URLSearchParams({projectId:selectedScan.projectId,scanId:selectedScan.id,format:'pdf',section:'technical'})}>Download scan report</a></div></aside></div>:null}
 
       {onboardingOpen?(
         <div className="modalBackdrop onboardingBackdrop">
@@ -829,4 +841,5 @@ export default function Home(){
     </main>
   );
 }
+
 
