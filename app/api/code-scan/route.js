@@ -15,7 +15,7 @@ async function handlePOST(request) {
     if (repository.protocol !== 'https:' || !['github.com','www.github.com'].includes(repository.hostname.toLowerCase())) {
       throw new Error('Only HTTPS GitHub repository URLs are supported.');
     }
-    const state = await readState();
+    const state = await readState({history:false});
     const project = state.projects.find((item) => item.id === body.projectId);
     if (!project) throw new Error('Project not found.');
     const job=await enqueueJob({projectId:project.id,type:'code-scan',scanType:'Code & Dependencies',target:repository.href},body);
@@ -23,3 +23,4 @@ async function handlePOST(request) {
   }catch(error){return Response.json({error:error.message},{status:400});}
 }
 export const POST=withWorkspace(handlePOST);
+

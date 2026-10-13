@@ -11,7 +11,7 @@ export const POST=withWorkspace(async request=>{
   try {
     const body=await request.json();
     if(body.authorized!==true) throw new Error('Authorization confirmation is required.');
-    const state=await readState(),project=state.projects.find(p=>p.id===body.projectId);
+    const state=await readState({history:false}),project=state.projects.find(p=>p.id===body.projectId);
     const asset=project?.assets.find(a=>a.id===body.assetId&&a.status==='active');
     if(!asset) throw new Error('Active target not found.');
     const mode=body.mode==='deep'?'deep':'standard';
@@ -20,3 +20,4 @@ export const POST=withWorkspace(async request=>{
     return Response.json(job,{status:202});
   }catch(error){return Response.json({error:error.message},{status:400});}
 });
+

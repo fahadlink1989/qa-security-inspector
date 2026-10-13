@@ -11,7 +11,7 @@ async function handlePOST(request){
     if(!body.projectId||!body.networkTargetId) throw new Error('Project and network target are required.');
     const worker=await scannerWorkerHealth();
     if(!worker.connected||!worker.health?.allowPrivateTargets) throw new Error('Internal scanner worker is not reachable. Connect an authorized internal worker before starting a network scan.');
-    const state=await readState();
+    const state=await readState({history:false});
     const project=state.projects.find(item=>item.id===body.projectId);
     if(!project) throw new Error('Project not found.');
     const target=(project.networks||[]).find(item=>item.id===body.networkTargetId);
@@ -21,3 +21,4 @@ async function handlePOST(request){
   }catch(error){return Response.json({error:error.message},{status:400});}
 }
 export const POST=withWorkspace(handlePOST);
+

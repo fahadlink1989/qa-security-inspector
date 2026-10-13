@@ -17,7 +17,7 @@ export const POST=withWorkspace(async request=>{
       return Response.json({ok:true,configured:Boolean(key||process.env.PAGESPEED_API_KEY)});
     }
     if(body.authorized!==true)throw new Error('Confirm permission to test and send this public URL to Google.');
-    const state=await readState(),project=state.projects.find(p=>p.id===body.projectId);
+    const state=await readState({history:false}),project=state.projects.find(p=>p.id===body.projectId);
     const asset=project?.assets?.find(a=>a.id===body.assetId&&a.status==='active');
     if(!asset)throw new Error('Active target not found.');
     const url=new URL(asset.url);
@@ -30,3 +30,4 @@ export const POST=withWorkspace(async request=>{
     return Response.json(job,{status:202});
   }catch(error){return Response.json({error:error.message},{status:error.status||400});}
 });
+

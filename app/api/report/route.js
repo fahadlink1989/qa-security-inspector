@@ -1,5 +1,6 @@
+import {getScanById} from '../../../lib/backend/scanRepository';
 import { withWorkspace } from '../../../lib/backend/auth';
-import { currentRiskRows, coverageState } from '../../../lib/riskModel.mjs';
+import { coverageState } from '../../../lib/riskModel.mjs';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import { latestScanForProject, readState } from '../../../lib/store';
 import { scoreFindings } from '../../../lib/scanner';
@@ -49,7 +50,7 @@ function reportFindings(sourceFindings,project,scan){
 }
 
 function currentWorkspaceFindings(state,project){
-  return currentRiskRows((state.scans||[]).filter(scan=>scan.projectId===project.id),project);
+  return (state.risks||[]).filter(r=>r._scan?.projectId===project.id);
 }
 
 function summarize(findings){
@@ -69,15 +70,16 @@ async function handleGET(request){
     const preview=url.searchParams.get('preview')==='1';
     if(!projectId) return new Response('projectId is required',{status:400});
 
-    const state=await readState();
+    const state=await readState({projectId});
     const project=state.projects.find((item)=>item.id===projectId);
     if(!project) return new Response('Project not found',{status:404});
     const history=[...(state.scans||[]).filter(s=>s.projectId===projectId),...(project.authScans||[]),...(project.codeScans||[]),...(project.networkScans||[])];
     const scanId=url.searchParams.get('scanId');
-    const scan=scanId?history.find(s=>s.id===scanId):latestScanForProject(state,projectId);
+    const selected=scanId?await getScanById(scanId):null;
+    const scan=scanId?(selected?.projectId===projectId?selected:null):latestScanForProject(state,projectId);
     if(scanId&&!scan)return new Response('Scan not found',{status:404});
     const rawFindings=scanId?(scan.findings||[]):currentWorkspaceFindings(state,project);
-    const reportScans=scanId?[scan]:history;
+    const reportScans=scanId?[scan]:history.filter(s=>s._latest);
     const coverageSummary=reportScans.map(s=>({target:s.url||s.target||s.repository?.url||'Repository',date:s.completedAt||s.scannedAt||s.startedAt,status:coverageState(s).label,gaps:coverageState(s).gaps}));
     const limitations='Point-in-time assessment of the listed scan scope. Missing or failed checks are not a clean result. Unscanned assets are not assessed. Workflow resolution may be manual; review retest evidence before treating a fix as verified.';
     if(!scan && !project.networkScans?.length && !project.authScans?.length && !project.codeScans?.length) return new Response('No completed scan is available',{status:404});
@@ -189,3 +191,4 @@ async function handleGET(request){
 
 
 export const GET=withWorkspace(handleGET);
+
