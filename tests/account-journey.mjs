@@ -25,6 +25,10 @@ await call('/api/account',{action:'switch_workspace',workspaceId:owner.data.acco
 await call('/api/team',{action:'remove_member',userId:separate.data.account.userId},owner.cookie,400);
 await call('/api/team',{action:'remove_member',userId:memberId},owner.cookie);
 await call('/api/workspace',null,member.cookie,401);
+const reinvite=await call('/api/team',{action:'invite',email:memberEmail,role:'member'},owner.cookie);
+await call('/api/account',{action:'accept_invitation',token:reinvite.data.token,email:memberEmail,password:'invalid-password'},'',401);
+const rejoined=await call('/api/account',{action:'accept_invitation',token:reinvite.data.token,email:memberEmail,password});
+assert.equal((await call('/api/workspace',null,rejoined.cookie)).data.account.role,'member');
 const revoked=await call('/api/team',{action:'invite',email:'qa-revoked-'+suffix+'@example.invalid',role:'member'},owner.cookie);
 const list=await call('/api/team',null,owner.cookie);const pending=list.data.invitations.find(i=>i.email.startsWith('qa-revoked-'));
 await call('/api/team',{action:'revoke_invitation',id:pending.id},owner.cookie);
