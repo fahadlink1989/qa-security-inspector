@@ -170,7 +170,7 @@ export default function Home(){
     return map;
   },[scans]);
 
-  const currentRisks=useMemo(()=>(data.risks||[]).filter(r=>workspaceWide||r._scan?.projectId===selectedProjectId).sort((a,b)=>({Critical:5,High:4,Medium:3,Low:2}[b.severity]||0)-({Critical:5,High:4,Medium:3,Low:2}[a.severity]||0)),[data.risks,selectedProjectId,workspaceWide]);
+  const currentRisks=useMemo(()=>(data.risks??scopedProjects.flatMap(p=>currentRiskRows(scans.filter(s=>s.projectId===p.id),p))).filter(r=>workspaceWide||r._scan?.projectId===selectedProjectId).sort((a,b)=>({Critical:5,High:4,Medium:3,Low:2}[b.severity]||0)-({Critical:5,High:4,Medium:3,Low:2}[a.severity]||0)),[data.risks,data.scans,data.projects,selectedProjectId,workspaceWide]);
   const latestCoverage=new Map();
   for(const s of scanRows){const k=JSON.stringify([s.projectId,s.assetId||s.networkTargetId||s.repositoryUrl||s.repository,s._kind||s.mode||'standard']);if(!latestCoverage.has(k))latestCoverage.set(k,s);}
   const hasCoverageGaps=[...latestCoverage.values()].some(s=>!coverageState(s).complete);
