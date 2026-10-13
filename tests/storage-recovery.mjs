@@ -1,0 +1,77 @@
+// Requires an isolated real PostgreSQL database. Never run against customer storage.
+import assert from 'node:assert/strict';
+import crypto from 'node:crypto';
+import fs from 'node:fs/promises';
+import {performance} from 'node:perf_hooks';
+import pg from 'pg';
+const url=process.env.TEST_DATABASE_URL;
+if(!url||!new URL(url).pathname.startsWith('/inspector_qa'))throw new Error('Use a dedicated inspector_qa database via TEST_DATABASE_URL.');
+process.env.DATABASE_URL=url;process.env.JOB_ENCRYPTION_KEY=crypto.randomBytes(32).toString('base64');
+process.env.BILLING_ENFORCED='0';
+const setup=new pg.Client({connectionString:url});await setup.connect();
+await setup.query(await fs.readFile('migrations/001_backend.sql','utf8'));
+await setup.query(await fs.readFile('migrations/002_commercial.sql','utf8'));
+const {database}=await import('../lib/backend/db.js');
+const {inWorkspace}=await import('../lib/backend/context.js');
+const {initialState,readState,mutateState}=await import('../lib/store.js');
+const {enqueueJob,claimJob,finishJob,failJob,heartbeat}=await import('../lib/backend/queue.js');
+const workspaceId=crypto.randomUUID(),otherId=crypto.randomUUID(),projectId=crypto.randomUUID();
+const state=initialState(workspaceId,'Isolated recovery test');state.projects.push({id:projectId,assets:[]});
+await setup.query('INSERT INTO inspector_workspaces(id,name,state) VALUES($1,$2,$3),($4,$5,$6)',[workspaceId,'QA',JSON.stringify(state),otherId,'Isolation',JSON.stringify(initialState(otherId))]);
+let checks=0;const check=(condition,message)=>{assert.ok(condition,message);checks++;};
+const migrationId=crypto.randomUUID(),migrationState=initialState(migrationId,'Migration QA');
+migrationState.scans=[{id:'legacy-web',projectId:'legacy-project',status:'completed',completedAt:'2026-01-01T00:00:00Z',findings:[{fingerprint:'legacy-evidence',evidence:'preserve me'}]}];
+migrationState.projects=[{id:'legacy-project',assets:[],performanceScans:[{id:'legacy-performance',status:'completed',completedAt:'2026-01-01T00:00:00Z',devices:{mobile:{score:72},desktop:{score:91}}}]}];
+await setup.query('INSERT INTO inspector_workspaces(id,name,state) VALUES($1,$2,$3)',[migrationId,'Migration QA',JSON.stringify(migrationState)]);
+await setup.query(await fs.readFile('migrations/002_commercial.sql','utf8'));
+await setup.query(await fs.readFile('migrations/002_commercial.sql','utf8'));
+const migrated=(await setup.query('SELECT kind,data FROM inspector_scan_history WHERE workspace_id=$1 ORDER BY kind',[migrationId])).rows;
+check(migrated.length===2,'Backfill is idempotent');
+check(migrated.find(r=>r.kind==='web').data.findings[0].evidence==='preserve me','Legacy evidence survives migration');
+check(migrated.find(r=>r.kind==='performance').data.devices.desktop.score===91,'Performance evidence survives migration');
+
+const context={workspaceId};
+await inWorkspace(context,async()=>{
+  // Concurrent submissions must not exceed the quota, including different connections.
+  const started=performance.now();
+  const results=await Promise.allSettled(Array.from({length:35},()=>enqueueJob({type:'qa-no-scanner',projectId},{})));
+  check(results.filter(r=>r.status==='fulfilled').length===20,'Queue quota remains atomic under concurrent requests');
+  console.log(JSON.stringify({test:'concurrent_submissions',requests:35,accepted:20,elapsedMs:Math.round(performance.now()-started)}));
+  const claims=await Promise.all(Array.from({length:8},()=>claimJob()));
+  check(new Set(claims.map(j=>j.id)).size===8,'Concurrent claims are exclusive');
+  const victim=claims[0];
+  await setup.query("UPDATE inspector_jobs SET lease_until=now()-interval '1 second',created_at=now()-interval '1 day' WHERE id=$1",[victim.id]);
+  const reclaimed=await claimJob();check(reclaimed.id===victim.id&&reclaimed.lease_token!==victim.lease_token,'Expired lease is reclaimed with new token');
+  check(!(await heartbeat(victim)),'Stale worker cannot renew lease');
+  await inWorkspace({...context,jobId:victim.id,leaseToken:victim.lease_token},async()=>assert.rejects(()=>mutateState(s=>s),/lease expired/));checks++;
+  await finishJob(victim,{id:'stale',status:'completed'});
+  check((await setup.query('SELECT status FROM inspector_jobs WHERE id=$1',[victim.id])).rows[0].status==='running','Stale completion is fenced');
+  await finishJob(reclaimed,{id:reclaimed.id,status:'completed'});
+  check((await setup.query('SELECT payload FROM inspector_jobs WHERE id=$1',[victim.id])).rows[0].payload===null,'Terminal job erases encrypted credentials');
+  const exhausted=claims[1];
+  await setup.query("UPDATE inspector_jobs SET attempts=max_attempts,lease_until=now()-interval '1 second' WHERE id=$1",[exhausted.id]);
+  await claimJob();
+  check((await setup.query('SELECT status,payload FROM inspector_jobs WHERE id=$1',[exhausted.id])).rows[0].status==='failed','Crashed final attempt becomes terminal');
+  const retry=claims[2];await failJob({...retry,attempts:1,max_attempts:3},new Error('secret that must not be logged'));
+  const retried=(await setup.query('SELECT status,payload,data FROM inspector_jobs WHERE id=$1',[retry.id])).rows[0];
+  check(retried.status==='queued'&&retried.payload&&!JSON.stringify(retried.data).includes('secret that'),'Transient failures retain only encrypted retry payload');
+  // Several thousand historical results with evidence; metadata should stay compact.
+  const scans=Array.from({length:3000},(_,i)=>({id:'qa-history-'+i,projectId,status:'completed',completedAt:new Date(Date.now()-i*1000).toISOString(),findings:[{fingerprint:'risk-'+i,severity:'Low',evidence:'x'.repeat(200)}]}));
+  const began=performance.now();
+  await mutateState(s=>{s.scans=scans;return s;});
+  check((await setup.query('SELECT count(*)::int AS n FROM inspector_scan_history WHERE workspace_id=$1',[workspaceId])).rows[0].n===3000,'All scan records persisted');
+  check((await setup.query("SELECT pg_column_size(state) AS bytes,jsonb_array_length(state->'scans') AS n FROM inspector_workspaces WHERE id=$1",[workspaceId])).rows[0].n===0,'Workspace metadata excludes history');
+  check((await readState()).scans.length===3000,'Legacy readers retain full history');
+  const timings=[];await Promise.all(Array.from({length:50},async()=>{const t=performance.now();const r=await database().query('SELECT id FROM inspector_scan_history WHERE workspace_id=$1 ORDER BY recorded_at DESC,kind DESC,id DESC LIMIT 25',[workspaceId]);check(r.rowCount===25,'Bounded history page');timings.push(performance.now()-t);}));
+  timings.sort((a,b)=>a-b);console.log(JSON.stringify({test:'history_load',records:3000,concurrentReads:50,p95Ms:Math.round(timings[Math.floor(timings.length*.95)]),writeMs:Math.round(performance.now()-began)}));
+  await assert.rejects(()=>mutateState(s=>{s.workspace.name='must rollback';throw new Error('injected crash');}));
+  check((await readState()).workspace.name!=='must rollback','Failed mutation rolls back');
+  // Restore a serialized history export into a separate test workspace and compare evidence.
+  const exported=(await setup.query('SELECT kind,id,project_id,asset_id,recorded_at,data FROM inspector_scan_history WHERE workspace_id=$1',[workspaceId])).rows;
+  await setup.query(`INSERT INTO inspector_scan_history(workspace_id,kind,id,project_id,asset_id,recorded_at,data) SELECT $1,r.kind,r.id,r.project_id,r.asset_id,r.recorded_at,r.data FROM jsonb_to_recordset($2::jsonb) AS r(kind text,id text,project_id text,asset_id text,recorded_at timestamptz,data jsonb)`,[otherId,JSON.stringify(exported)]);
+  check((await setup.query('SELECT count(*)::int AS n FROM inspector_scan_history WHERE workspace_id=$1',[otherId])).rows[0].n===3000,'Exported evidence restores into independent workspace');
+  const exact=await setup.query('SELECT count(*)::int AS n FROM inspector_scan_history a JOIN inspector_scan_history b ON a.id=b.id AND a.kind=b.kind WHERE a.workspace_id=$1 AND b.workspace_id=$2 AND a.data=b.data',[workspaceId,otherId]);check(exact.rows[0].n===3000,'Restored evidence matches all original records');
+});
+await inWorkspace({workspaceId:otherId},async()=>{check((await readState()).workspace.id===otherId,'Workspace metadata remains isolated');});
+console.log(JSON.stringify({test:'storage_recovery',checks,status:'passed',note:'Synthetic database workload; not scanner throughput certification.'}));
+await setup.end();await database().end();
